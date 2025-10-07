@@ -2,6 +2,8 @@ plugins {
 	id 'java'
 	id 'org.springframework.boot' version '3.5.6'
 	id 'io.spring.dependency-management' version '1.1.7'
+	id 'org.flywaydb.flyway' version '10.4.1'
+	id 'jacoco'
 }
 
 group = 'com.forge'
@@ -25,17 +27,118 @@ repositories {
 }
 
 dependencies {
+	// Spring Boot Starters
 	implementation 'org.springframework.boot:spring-boot-starter-actuator'
 	implementation 'org.springframework.boot:spring-boot-starter-webflux'
+	implementation 'org.springframework.boot:spring-boot-starter-data-r2dbc'
+	implementation 'org.springframework.boot:spring-boot-starter-data-redis-reactive'
+	implementation 'org.springframework.boot:spring-boot-starter-validation'
 
+	// GraphQL
+	implementation 'org.springframework.boot:spring-boot-starter-graphql'
+
+	// R2DBC PostgreSQL
+	implementation 'org.postgresql:r2dbc-postgresql:1.0.2.RELEASE'
+	implementation 'io.r2dbc:r2dbc-pool:1.0.1.RELEASE'
+
+	// PostgreSQL JDBC (for Flyway migrations)
+	implementation 'org.postgresql:postgresql:42.7.4'
+
+	// Flyway
+	implementation 'org.flywaydb:flyway-core:10.4.1'
+	implementation 'org.flywaydb:flyway-database-postgresql:10.4.1'
+
+	// Redis Reactive - Lettuce version managed by Spring Boot
+	// No need to explicitly declare lettuce-core, it comes with spring-boot-starter-data-redis-reactive
+
+	// Local Cache (L1)
+	implementation 'com.github.ben-manes.caffeine:caffeine:3.1.8'
+
+	// JSON Processing
+	implementation 'com.fasterxml.jackson.core:jackson-databind'
+	implementation 'com.fasterxml.jackson.datatype:jackson-datatype-jsr310'
+
+	// OpenAPI/Swagger for REST
+	implementation 'org.springdoc:springdoc-openapi-starter-webflux-ui:2.3.0'
+
+	// DataFaker for username generation
+	implementation 'net.datafaker:datafaker:2.1.0'
+
+	// Resilience4j for Circuit Breaker
+	implementation 'io.github.resilience4j:resilience4j-spring-boot3:2.1.0'
+	implementation 'io.github.resilience4j:resilience4j-reactor:2.1.0'
+
+	// Micrometer for Prometheus metrics
+	implementation 'io.micrometer:micrometer-registry-prometheus'
+
+	// Lombok
 	compileOnly 'org.projectlombok:lombok'
 	annotationProcessor 'org.projectlombok:lombok'
 
+	// Test Dependencies
 	testImplementation 'org.springframework.boot:spring-boot-starter-test'
 	testImplementation 'io.projectreactor:reactor-test'
+	testImplementation 'org.springframework.graphql:spring-graphql-test'
+	testImplementation 'org.testcontainers:testcontainers:1.19.3'
+	testImplementation 'org.testcontainers:postgresql:1.19.3'
+	testImplementation 'org.testcontainers:junit-jupiter:1.19.3'
+	testImplementation 'io.rest-assured:rest-assured:5.4.0'
+	testImplementation 'org.mockito:mockito-core:5.8.0'
+	testImplementation 'org.assertj:assertj-core:3.25.1'
+	testImplementation 'org.wiremock:wiremock-standalone:3.3.1'
 	testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+}
+
+// Suppress unchecked and all compiler notes/warnings
+compileJava {
+	options.compilerArgs += ['-Xlint:none', '-nowarn']
+	options.warnings = false
+	options.deprecation = false
+}
+
+compileTestJava {
+	options.compilerArgs += ['-Xlint:none', '-nowarn']
+	options.warnings = false
+	options.deprecation = false
 }
 
 tasks.named('test') {
 	useJUnitPlatform()
+	systemProperty 'spring.profiles.active', 'test'
+
+	// JVM arguments to suppress Java 21 warnings with Mockito/ByteBuddy
+	jvmArgs = [
+		'-XX:+EnableDynamicAgentLoading',  // Suppress dynamic agent loading warning
+		'-Xshare:off'                       // Disable class data sharing to suppress bootstrap classpath warning
+	]
+
+	finalizedBy jacocoTestReport // report is always generated after tests run
 }
+
+jacoco {
+	toolVersion = "0.8.11" // Use the latest version available
+}
+
+jacocoTestReport {
+	dependsOn test // tests are required to run before generating the report
+	
+	afterEvaluate {
+		classDirectories.setFrom(files(classDirectories.files.collect {
+			fileTree(dir: it, exclude: [
+				'**/config/**',
+				'**/dto/**',
+				'**/exception/**',
+				'**/model/**',
+				'**/ForgeNameProjectApplication.class'
+			])
+		}))
+	}
+
+	reports {
+		xml.required = true
+		html.required = true
+	}
+}
+
+// Ensure the jacocoTestReport task runs during the build
+check.dependsOn jacocoTestReport
