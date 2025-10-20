@@ -1,0 +1,158 @@
+# Resilience4j Configuration for Circuit Breaker, Retry, and Timeout patterns
+
+resilience4j:
+  # Circuit Breaker Configuration
+  circuitbreaker:
+    configs:
+      default:
+        registerHealthIndicator: true
+        slidingWindowSize: 10              # Últimas 10 llamadas para calcular tasa de fallos
+        minimumNumberOfCalls: 5            # Mínimo de llamadas antes de calcular tasa de fallos
+        permittedNumberOfCallsInHalfOpenState: 3
+        automaticTransitionFromOpenToHalfOpenEnabled: true
+        waitDurationInOpenState: 30s       # Espera 30s antes de pasar a half-open
+        failureRateThreshold: 50           # Abre si 50% de llamadas fallan
+        slowCallRateThreshold: 100         # Umbral de llamadas lentas (100% = deshabilitado por defecto)
+        slowCallDurationThreshold: 10s     # Llamadas >10s se consideran lentas
+        recordExceptions:
+          - java.io.IOException
+          - java.util.concurrent.TimeoutException
+          - org.springframework.web.reactive.function.client.WebClientRequestException
+          - org.springframework.web.reactive.function.client.WebClientResponseException.InternalServerError
+          - org.springframework.web.reactive.function.client.WebClientResponseException.BadGateway
+          - org.springframework.web.reactive.function.client.WebClientResponseException.ServiceUnavailable
+          - org.springframework.web.reactive.function.client.WebClientResponseException.GatewayTimeout
+        ignoreExceptions:
+          - org.springframework.web.reactive.function.client.WebClientResponseException.BadRequest
+          - org.springframework.web.reactive.function.client.WebClientResponseException.Unauthorized
+          - org.springframework.web.reactive.function.client.WebClientResponseException.Forbidden
+          - org.springframework.web.reactive.function.client.WebClientResponseException.NotFound
+          - org.springframework.web.reactive.function.client.WebClientResponseException.TooManyRequests
+          - org.springframework.web.reactive.function.client.WebClientResponseException.UnprocessableEntity
+          - java.lang.IllegalArgumentException
+          - java.lang.IllegalStateException
+          - com.forge.domain.exceptions.ValidationException
+    instances:
+      openai-moderation:
+        baseConfig: default
+        failureRateThreshold: 60           # Más tolerante para API externa
+        waitDurationInOpenState: 60s       # Espera más tiempo para APIs externas
+
+      database:
+        baseConfig: default
+        failureRateThreshold: 40           # Menos tolerante para DB crítica
+        waitDurationInOpenState: 10s       # Recuperación más rápida
+        minimumNumberOfCalls: 3
+
+      redis-cache:
+        baseConfig: default
+        failureRateThreshold: 70           # Muy tolerante, cache no es crítico
+        waitDurationInOpenState: 20s
+        slidingWindowSize: 20
+
+  # Retry Configuration
+  retry:
+    configs:
+      default:
+        maxAttempts: 3
+        waitDuration: 500ms                # Espera inicial entre reintentos
+        enableExponentialBackoff: true
+        exponentialBackoffMultiplier: 2    # 500ms, 1s, 2s, 4s...
+        enableRandomizedWait: true         # Añade jitter aleatorio ±25%
+        randomizedWaitFactor: 0.5          # Factor de aleatoriedad
+        retryExceptions:
+          - java.io.IOException
+          - java.util.concurrent.TimeoutException
+          - org.springframework.web.reactive.function.client.WebClientRequestException
+          - org.springframework.web.reactive.function.client.WebClientResponseException.InternalServerError
+          - org.springframework.web.reactive.function.client.WebClientResponseException.BadGateway
+          - org.springframework.web.reactive.function.client.WebClientResponseException.ServiceUnavailable
+          - org.springframework.web.reactive.function.client.WebClientResponseException.GatewayTimeout
+        ignoreExceptions:
+          - org.springframework.web.reactive.function.client.WebClientResponseException.BadRequest
+          - org.springframework.web.reactive.function.client.WebClientResponseException.Unauthorized
+          - org.springframework.web.reactive.function.client.WebClientResponseException.Forbidden
+          - org.springframework.web.reactive.function.client.WebClientResponseException.NotFound
+          - org.springframework.web.reactive.function.client.WebClientResponseException.TooManyRequests
+          - org.springframework.web.reactive.function.client.WebClientResponseException.UnprocessableEntity
+          - org.springframework.web.reactive.function.client.WebClientResponseException.Conflict
+          - java.lang.IllegalArgumentException
+          - java.lang.IllegalStateException
+    instances:
+      openai-moderation:
+        baseConfig: default
+        maxAttempts: 2                     # Menos reintentos para APIs externas costosas
+        waitDuration: 1s
+        exponentialBackoffMultiplier: 2
+
+      database:
+        baseConfig: default
+        maxAttempts: 3
+        waitDuration: 100ms                # Reintentos rápidos para DB
+        exponentialBackoffMultiplier: 2
+
+      redis-cache:
+        baseConfig: default
+        maxAttempts: 2                     # Cache no es crítico, fallar rápido
+        waitDuration: 50ms
+
+  # TimeLimiter Configuration (Timeouts separados del Circuit Breaker)
+  timelimiter:
+    configs:
+      default:
+        cancelRunningFuture: true
+        timeoutDuration: 5s
+    instances:
+      openai-moderation:
+        timeoutDuration: 10s               # APIs externas necesitan más tiempo
+      database:
+        timeoutDuration: 3s
+      redis-cache:
+        timeoutDuration: 2s
+
+  # Bulkhead Configuration (Rate Limiting de concurrencia)
+  bulkhead:
+    configs:
+      default:
+        maxConcurrentCalls: 10
+        maxWaitDuration: 0ms               # No esperar, fallar inmediatamente si no hay slots
+    instances:
+      openai-moderation:
+        maxConcurrentCalls: 5              # Limitar llamadas concurrentes a API externa
+      database:
+        maxConcurrentCalls: 20
+      redis-cache:
+        maxConcurrentCalls: 50
+
+  # RateLimiter Configuration (Límite de requests por periodo)
+  ratelimiter:
+    configs:
+      default:
+        registerHealthIndicator: true
+        limitForPeriod: 50
+        limitRefreshPeriod: 1s
+        timeoutDuration: 0ms
+    instances:
+      openai-moderation:
+        limitForPeriod: 10                 # 10 requests por segundo a OpenAI
+        limitRefreshPeriod: 1s
+
+# Management endpoints para Resilience4j
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,metrics,circuitbreakers,circuitbreakerevents,retries,retryevents
+  endpoint:
+    health:
+      show-details: always
+  health:
+    circuitbreakers:
+      enabled: true
+    ratelimiters:
+      enabled: true
+  metrics:
+    distribution:
+      percentiles-histogram:
+        resilience4j.circuitbreaker.calls: true
+        resilience4j.retry.calls: true

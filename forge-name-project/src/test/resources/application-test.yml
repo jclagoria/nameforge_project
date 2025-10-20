@@ -1,0 +1,35 @@
+spring:
+  # R2DBC will be configured by Testcontainers via DynamicPropertySource
+  r2dbc:
+    url: r2dbc:postgresql://localhost:5432/test # Placeholder, will be overridden
+
+  # Completely disable Redis for tests
+  data:
+    redis:
+      repositories:
+        enabled: false
+  redis:
+    host: # Explicitly empty to prevent Redis bean creation
+    port:
+
+  # Disable Flyway for tests (schema will be created manually)
+  flyway:
+    enabled: false
+
+  # SQL initialization
+  sql:
+    init:
+      mode: never
+
+# Disable moderation services for tests
+moderation:
+  openai:
+    enabled: false
+  perspective:
+    enabled: false
+
+# Logging for tests
+logging:
+  level:
+    com.forge: DEBUG
+    org.springframework.data.r2dbc: DEBUG

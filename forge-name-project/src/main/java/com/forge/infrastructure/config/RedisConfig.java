@@ -1,0 +1,36 @@
+package com.forge.infrastructure.config;
+
+import lombok.RequiredArgsConstructor;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnClass;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+import org.springframework.context.annotation.Primary;
+import org.springframework.data.redis.connection.ReactiveRedisConnectionFactory;
+import org.springframework.data.redis.core.ReactiveRedisTemplate;
+import org.springframework.data.redis.serializer.RedisSerializationContext;
+import org.springframework.data.redis.serializer.StringRedisSerializer;
+
+@Configuration
+@ConditionalOnClass(ReactiveRedisConnectionFactory.class)
+@ConditionalOnProperty(prefix = "spring.data.redis.repositories", name = "enabled", matchIfMissing = true)
+public class RedisConfig {
+
+    @Bean
+    @Primary
+    public ReactiveRedisTemplate<String, String> reactiveRedisTemplate(
+            ReactiveRedisConnectionFactory connectionFactory
+    ) {
+        StringRedisSerializer serializer = new StringRedisSerializer();
+
+        RedisSerializationContext<String, String> context = RedisSerializationContext
+                .<String, String>newSerializationContext(serializer)
+                .key(serializer)
+                .value(serializer)
+                .hashKey(serializer)
+                .hashValue(serializer)
+                .build();
+
+        return new ReactiveRedisTemplate<>(connectionFactory, context);
+    }
+}

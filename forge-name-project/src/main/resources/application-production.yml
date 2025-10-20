@@ -1,0 +1,40 @@
+spring:
+  config:
+    activate:
+      on-profile: production
+
+  # R2DBC Production Configuration
+  r2dbc:
+    pool:
+      initial-size: 20
+      max-size: 50
+      max-idle-time: 60m
+      max-acquire-time: 3s
+      max-create-connection-time: 5s
+
+  # Flyway Production Configuration
+  flyway:
+    enabled: true
+    validate-on-migrate: true
+    clean-disabled: true  # Never allow clean in production
+    out-of-order: false
+    ignore-missing-migrations: false
+
+  # Redis Production Configuration
+  data:
+    redis:
+      timeout: 3000ms
+      lettuce:
+        pool:
+          max-active: 50
+          max-idle: 20
+          min-idle: 10
+          max-wait: 2000ms
+        shutdown-timeout: 100ms
+
+# Moderation Configuration for Production
+moderation:
+  openai:
+    enabled: true
+    timeout: 3s
+    max-retries: 3

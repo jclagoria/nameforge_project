@@ -37,6 +37,15 @@ out/
 ### VS Code ###
 .vscode/
 
+### Environment Variables ###
+.env
+.env.local
+.env.*.local
+
 .claude
 CLAUDE.md
+
+### Logs and Diagnostics ###
+log/
+*.log
 

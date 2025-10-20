@@ -4,6 +4,7 @@ plugins {
 	id 'io.spring.dependency-management' version '1.1.7'
 	id 'org.flywaydb.flyway' version '10.4.1'
 	id 'jacoco'
+	id 'co.uzzu.dotenv.gradle' version '4.0.0'
 }
 
 group = 'com.forge'
@@ -26,6 +27,11 @@ repositories {
 	mavenCentral()
 }
 
+// Load .env file for development
+tasks.withType(JavaExec).configureEach {
+	environment env.allVariables()
+}
+
 dependencies {
 	// Spring Boot Starters
 	implementation 'org.springframework.boot:spring-boot-starter-actuator'
@@ -38,35 +44,32 @@ dependencies {
 	implementation 'org.springframework.boot:spring-boot-starter-graphql'
 
 	// R2DBC PostgreSQL
-	implementation 'org.postgresql:r2dbc-postgresql:1.0.2.RELEASE'
-	implementation 'io.r2dbc:r2dbc-pool:1.0.1.RELEASE'
+	implementation 'org.postgresql:r2dbc-postgresql:1.1.0.RELEASE'
+	implementation 'io.r2dbc:r2dbc-pool:1.0.2.RELEASE'
 
 	// PostgreSQL JDBC (for Flyway migrations)
-	implementation 'org.postgresql:postgresql:42.7.4'
+	implementation 'org.postgresql:postgresql:42.7.8'
 
 	// Flyway
-	implementation 'org.flywaydb:flyway-core:10.4.1'
-	implementation 'org.flywaydb:flyway-database-postgresql:10.4.1'
-
-	// Redis Reactive - Lettuce version managed by Spring Boot
-	// No need to explicitly declare lettuce-core, it comes with spring-boot-starter-data-redis-reactive
+	implementation 'org.flywaydb:flyway-core:11.14.1'
+	implementation 'org.flywaydb:flyway-database-postgresql:11.14.1'
 
 	// Local Cache (L1)
-	implementation 'com.github.ben-manes.caffeine:caffeine:3.1.8'
+	implementation 'com.github.ben-manes.caffeine:caffeine:3.2.2'
 
 	// JSON Processing
 	implementation 'com.fasterxml.jackson.core:jackson-databind'
 	implementation 'com.fasterxml.jackson.datatype:jackson-datatype-jsr310'
 
 	// OpenAPI/Swagger for REST
-	implementation 'org.springdoc:springdoc-openapi-starter-webflux-ui:2.3.0'
+	implementation 'org.springdoc:springdoc-openapi-starter-webflux-ui:2.8.13'
 
 	// DataFaker for username generation
-	implementation 'net.datafaker:datafaker:2.1.0'
+	implementation 'net.datafaker:datafaker:2.5.2'
 
 	// Resilience4j for Circuit Breaker
-	implementation 'io.github.resilience4j:resilience4j-spring-boot3:2.1.0'
-	implementation 'io.github.resilience4j:resilience4j-reactor:2.1.0'
+	implementation 'io.github.resilience4j:resilience4j-spring-boot3:2.3.0'
+	implementation 'io.github.resilience4j:resilience4j-reactor:2.3.0'
 
 	// Micrometer for Prometheus metrics
 	implementation 'io.micrometer:micrometer-registry-prometheus'
@@ -79,9 +82,9 @@ dependencies {
 	testImplementation 'org.springframework.boot:spring-boot-starter-test'
 	testImplementation 'io.projectreactor:reactor-test'
 	testImplementation 'org.springframework.graphql:spring-graphql-test'
-	testImplementation 'org.testcontainers:testcontainers:1.19.3'
-	testImplementation 'org.testcontainers:postgresql:1.19.3'
-	testImplementation 'org.testcontainers:junit-jupiter:1.19.3'
+	testImplementation 'org.testcontainers:testcontainers:1.21.3'
+	testImplementation 'org.testcontainers:postgresql:1.21.3'
+	testImplementation 'org.testcontainers:junit-jupiter:1.21.3'
 	testImplementation 'io.rest-assured:rest-assured:5.4.0'
 	testImplementation 'org.mockito:mockito-core:5.8.0'
 	testImplementation 'org.assertj:assertj-core:3.25.1'
@@ -111,6 +114,10 @@ tasks.named('test') {
 		'-XX:+EnableDynamicAgentLoading',  // Suppress dynamic agent loading warning
 		'-Xshare:off'                       // Disable class data sharing to suppress bootstrap classpath warning
 	]
+
+	// Disable Testcontainers Ryuk to avoid Docker networking issues
+	// Ryuk causes "operation not supported" errors with certain Docker/kernel configurations
+	environment 'TESTCONTAINERS_RYUK_DISABLED', 'true'
 
 	finalizedBy jacocoTestReport // report is always generated after tests run
 }

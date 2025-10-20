@@ -1,0 +1,38 @@
+spring:
+  config:
+    activate:
+      on-profile: test
+
+  # R2DBC Test Configuration (overridden by Testcontainers in integration tests)
+  r2dbc:
+    url: r2dbc:postgresql://localhost:5432/nameforge_test
+    username: test_user
+    password: test_pass
+    pool:
+      initial-size: 5
+      max-size: 10
+
+  # Flyway Test Configuration
+  # Disabled in tests because Testcontainers uses schema.sql directly
+  flyway:
+    enabled: false
+
+  # Redis Test Configuration (overridden by Testcontainers)
+  data:
+    redis:
+      host: localhost
+      port: 6379
+      database: 1  # Use database 1 for tests
+      timeout: 1000ms
+
+  # SQL Init for non-Testcontainers tests
+  sql:
+    init:
+      mode: always
+      schema-locations: classpath:schema.sql
+
+# Moderation Configuration for Tests
+moderation:
+  openai:
+    enabled: false  # Use SimpleModerationService in tests
+    timeout: 1s

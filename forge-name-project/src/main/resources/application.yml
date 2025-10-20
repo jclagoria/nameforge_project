@@ -1,6 +1,92 @@
 spring:
   profiles:
     active:
-    - development
+      - dev
   application:
-    name: forge-name  
+    name: forge-name
+  config:
+    import:
+      - optional:classpath:application-resilience.yml
+
+  # R2DBC Configuration (Reactive PostgreSQL)
+  r2dbc:
+    url: ${DB_R2DBC_URL}
+    username: ${DB_USERNAME}
+    password: ${DB_PASSWORD}
+    pool:
+      initial-size: 5
+      max-size: 10
+      max-idle-time: 30m
+      validation-query: SELECT 1
+      max-create-connection-time: 10s
+      max-acquire-time: 10s
+    properties:
+      sslMode: ${DB_SSL_MODE:require}
+
+  # Flyway Configuration (Database Migrations)
+  flyway:
+    enabled: true
+    url: ${DB_JDBC_URL}
+    user: ${DB_USERNAME:nameforge_user}
+    password: ${DB_PASSWORD:nameforge_pass}
+    locations: classpath:db/migration
+    baseline-on-migrate: true
+    baseline-version: 0
+    validate-on-migrate: true
+
+  # Redis Configuration (Reactive Cache)
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      password: ${REDIS_PASSWORD:}
+      database: 0
+      timeout: 5000ms
+      ssl:
+        enabled: ${REDIS_USE_SSL:false}
+      lettuce:
+        pool:
+          max-active: 10
+          max-idle: 5
+          min-idle: 2
+          max-wait: 3000ms
+
+# Moderation Configuration
+moderation:
+  openai:
+    enabled: ${OPENAI_MODERATION_ENABLED:false}
+    api-key: ${OPENAI_API_KEY:}
+    endpoint: https://api.openai.com/v1/moderations
+    timeout: 5s
+    max-retries: 2
+
+perspective:
+  enabled: ${PERSPECTIVE_API_ENABLED:true}
+  api-key: ${PERSPECTIVE_API_KEY:}
+  endpoint: https://commentanalyzer.googleapis.com/v1alpha1/comments:analyze
+  timeout: 10s
+  max-retries: 2
+  default-language: es
+  do-not-store: true
+  thresholds:
+    toxicity: ${PERSPECTIVE_TOXICITY_THRESHOLD:0.7}
+    severe-toxicity: ${PERSPECTIVE_SEVERE_TOXICITY_THRESHOLD:0.5}
+    identity-attack: ${PERSPECTIVE_IDENTITY_ATTACK_THRESHOLD:0.6}
+    insult: ${PERSPECTIVE_INSULT_THRESHOLD:0.7}
+    threat: ${PERSPECTIVE_THREAT_THRESHOLD:0.5}
+
+# SpringDoc OpenAPI Configuration
+springdoc:
+  api-docs:
+    path: /v3/api-docs
+    enabled: true
+  swagger-ui:
+    path: /swagger-ui.html
+    enabled: true
+    operationsSorter: method
+    tagsSorter: alpha
+    displayRequestDuration: true
+    filter: true
+  show-actuator: true
+  packages-to-scan: com.forge.adapters.inbound
+  paths-to-match: /api/**

@@ -119,6 +119,7 @@ public enum Category { ANIMALS, COLORS, TECHNOLOGY, NATURE }
 ```
 
 ### Agregados y Invariantes
+
 - **Username Aggregate**: Asegura formato válido (5-30 chars, charset específico)
 - **Generation Aggregate**: Valida count máximo (10), language requerido
 - **Uniqueness Invariant**: No duplicados en sistema
@@ -127,42 +128,10 @@ public enum Category { ANIMALS, COLORS, TECHNOLOGY, NATURE }
 ## 🚀 Patrones de Implementación
 
 ### Reactive Programming
-```java
-// Patrón típico de flujo reactivo
-public Flux<Username> generateUsernames(GenerationRequest request) {
-    return cacheService.getCachedUsernames(request.getLanguage())
-        .switchIfEmpty(
-            generator.generateBatch(request)
-                .filterWhen(this::isAppropriate)
-                .filterWhen(this::isUnique)
-                .doOnNext(this::cacheResult)
-        )
-        .take(request.getCount());
-}
-```
 
 ### Circuit Breaker Pattern
-```java
-@CircuitBreaker(name = "moderation", fallbackMethod = "fallbackModeration")
-public Mono<Boolean> checkContent(String text) {
-    return primaryModerationService.isAppropriate(text)
-        .timeout(Duration.ofSeconds(5));
-}
-```
 
 ### Strategy Pattern
-```java
-// Algoritmos de generación intercambiables
-public interface GenerationStrategy {
-    Mono<String> generate(Language language);
-}
-
-@Component("classic")
-public class ClassicPatternStrategy implements GenerationStrategy { /* ... */ }
-
-@Component("wordplay")
-public class WordplayPatternStrategy implements GenerationStrategy { /* ... */ }
-```
 
 ## 📈 Métricas de Performance
 
@@ -251,8 +220,3 @@ Performance: BATCH_SIZE, CACHE_TTL, RATE_LIMIT
 3. **Java Architecture Details** → `04-Java-Architecture.md`
 4. **API Specifications** → `05-API-Specifications.md`
 5. **Deployment Guide** → `06-Deployment-Configuration.md`
-
----
-**Documento generado**: 2024-09-24
-**Autor**: Technical Architecture Team
-**Versión**: 1.0.0

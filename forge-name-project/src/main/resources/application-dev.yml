@@ -1,0 +1,89 @@
+spring:
+  config:
+    activate:
+      on-profile: dev
+
+  # R2DBC Development Configuration
+  r2dbc:
+    pool:
+      initial-size: 5
+      max-size: 15
+      max-idle-time: 20m
+      max-acquire-time: 5s
+      validation-query: SELECT 1
+
+  # Flyway Development Configuration
+  flyway:
+    enabled: true
+    clean-disabled: false  # Allow clean in development
+    validate-on-migrate: true
+    baseline-on-migrate: true
+    out-of-order: true  # Allow out-of-order migrations in dev
+    ignore-missing-migrations: false
+
+  # Redis Development Configuration
+  data:
+    redis:
+      timeout: 1500ms
+      lettuce:
+        pool:
+          max-active: 15
+          max-idle: 8
+          min-idle: 3
+          max-wait: 1000ms
+
+  # Development SQL Logging
+  jpa:
+    show-sql: false  # Using R2DBC, not JPA
+
+# Logging Configuration for Development
+logging:
+  level:
+    root: INFO
+    com.forge: DEBUG
+    org.springframework.web: DEBUG
+    org.springframework.r2dbc: DEBUG
+    io.r2dbc.postgresql: DEBUG
+    org.springframework.data.redis: DEBUG
+    org.flywaydb: INFO
+  pattern:
+    console: "%d{HH:mm:ss.SSS} [%thread] %-5level %logger{36} - %msg%n"
+
+# Actuator Configuration for Development
+management:
+  endpoints:
+    web:
+      exposure:
+        include: "*"  # Expose all actuator endpoints in dev
+      base-path: /actuator
+  endpoint:
+    health:
+      show-details: always
+      show-components: always
+    env:
+      show-values: always
+  metrics:
+    export:
+      prometheus:
+        enabled: true
+
+# Moderation Configuration for Development
+moderation:
+  openai:
+    enabled: ${OPENAI_MODERATION_ENABLED:false}
+    timeout: 5s
+    max-retries: 2
+
+# WebFlux Development Configuration
+spring.webflux:
+  base-path: /
+
+# Development Server Configuration
+server:
+  port: 8080
+  shutdown: graceful
+  error:
+    include-message: always
+    include-binding-errors: always
+    include-stacktrace: always
+    include-exception: true
