@@ -32,6 +32,12 @@ spring:
           max-wait: 2000ms
         shutdown-timeout: 100ms
 
+  graphql:
+    graphiql:
+      enabled: false
+    cors:
+      allowed-origins: "https://algun-dominio.com"
+
 # Moderation Configuration for Production
 moderation:
   openai:
