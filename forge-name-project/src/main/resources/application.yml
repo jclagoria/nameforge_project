@@ -50,6 +50,22 @@ spring:
           max-idle: 5
           min-idle: 2
           max-wait: 3000ms
+graphql:
+  graphiql:
+    enabled: true
+    path: /graphiql
+  path: /graphql
+  schemas:
+    printer:
+      enabled: true
+    locations: classpath:graphql/
+    file-extensions: .graphqls
+  websocket:
+    path: /graphql
+  cors:
+    allowed-origins: "*"
+    allowed-methods: GET, POST
+    allowed-headers: "*"
 
 # Moderation Configuration
 moderation:

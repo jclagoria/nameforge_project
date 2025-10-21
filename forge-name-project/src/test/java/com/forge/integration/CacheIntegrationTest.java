@@ -221,4 +221,142 @@ class CacheIntegrationTest {
                         cacheMissTime.get(), cacheHitTime.get())
                 .isLessThan(maxAcceptableCacheHitTime);
     }
+
+    // ==========================================
+    // GraphQL Cache Tests
+    // ==========================================
+
+    @Test
+    @DisplayName("GraphQL: Should return cache miss on first request")
+    void graphqlShouldHaveCacheMissOnFirstRequest() {
+        // ARRANGE
+        String mutation = """
+            {
+              "query": "mutation { generateUsernames(input: { language: EN, count: 3 }) { cacheHit usernames } }"
+            }
+            """;
+
+        // ACT & ASSERT
+        webTestClient.post()
+                .uri("/graphql")
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(mutation)
+                .exchange()
+                .expectStatus().isOk()
+                .expectBody()
+                .jsonPath("$.data.generateUsernames.cacheHit").isEqualTo(false)
+                .jsonPath("$.data.generateUsernames.usernames.length()").isEqualTo(3);
+    }
+
+    @Test
+    @DisplayName("GraphQL: Should return cache hit on subsequent request")
+    void graphqlShouldHaveCacheHitOnSubsequentRequest() {
+        // ARRANGE
+        String mutation = """
+            {
+              "query": "mutation { generateUsernames(input: { language: ES, count: 2 }) { cacheHit usernames } }"
+            }
+            """;
+
+        // First request - populate cache
+        webTestClient.post()
+                .uri("/graphql")
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(mutation)
+                .exchange()
+                .expectStatus().isOk()
+                .expectBody()
+                .jsonPath("$.data.generateUsernames.cacheHit").isEqualTo(false);
+
+        // Second request - should hit cache
+        webTestClient.post()
+                .uri("/graphql")
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(mutation)
+                .exchange()
+                .expectStatus().isOk()
+                .expectBody()
+                .jsonPath("$.data.generateUsernames.cacheHit").isEqualTo(true)
+                .jsonPath("$.data.generateUsernames.usernames.length()").isEqualTo(2);
+    }
+
+    @Test
+    @DisplayName("GraphQL: Should demonstrate cache performance improvement")
+    void graphqlShouldShowCachePerformanceImprovement() {
+        // ARRANGE
+        String mutation = """
+            {
+              "query": "mutation { generateUsernames(input: { language: EN, count: 5 }) { cacheHit responseTimeMs } }"
+            }
+            """;
+
+        AtomicReference<Long> cacheMissTime = new AtomicReference<>();
+        AtomicReference<Long> cacheHitTime = new AtomicReference<>();
+
+        // First request (cache miss)
+        webTestClient.post()
+                .uri("/graphql")
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(mutation)
+                .exchange()
+                .expectStatus().isOk()
+                .expectBody()
+                .jsonPath("$.data.generateUsernames.cacheHit").isEqualTo(false)
+                .jsonPath("$.data.generateUsernames.responseTimeMs").value(time ->
+                        cacheMissTime.set(((Number) time).longValue())
+                );
+
+        // Second request (cache hit)
+        webTestClient.post()
+                .uri("/graphql")
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(mutation)
+                .exchange()
+                .expectStatus().isOk()
+                .expectBody()
+                .jsonPath("$.data.generateUsernames.cacheHit").isEqualTo(true)
+                .jsonPath("$.data.generateUsernames.responseTimeMs").value(time ->
+                        cacheHitTime.set(((Number) time).longValue())
+                );
+
+        // ASSERT - GraphQL cache hit should also be significantly faster
+        long maxAcceptableCacheHitTime = (long) (cacheMissTime.get() * 0.5);
+        assertThat(cacheHitTime.get())
+                .as("GraphQL cache hit should be at least 50%% faster (miss: %dms, hit: %dms)",
+                        cacheMissTime.get(), cacheHitTime.get())
+                .isLessThan(maxAcceptableCacheHitTime);
+    }
+
+    @Test
+    @DisplayName("REST and GraphQL should share the same cache")
+    void restAndGraphQLShouldShareSameCache() {
+        // ARRANGE
+        GenerationRequestDto restRequest = new GenerationRequestDto("EN", 3);
+        String graphqlMutation = """
+            {
+              "query": "mutation { generateUsernames(input: { language: EN, count: 3 }) { cacheHit usernames } }"
+            }
+            """;
+
+        // ACT - First request via REST (populate cache)
+        webTestClient.post()
+                .uri("/api/v1/usernames/generate")
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(restRequest)
+                .exchange()
+                .expectStatus().isOk()
+                .expectBody()
+                .jsonPath("$.cacheHit").isEqualTo(false);
+
+        // Second request via GraphQL (should hit cache)
+        webTestClient.post()
+                .uri("/graphql")
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(graphqlMutation)
+                .exchange()
+                .expectStatus().isOk()
+                .expectBody()
+                .jsonPath("$.data.generateUsernames.cacheHit").isEqualTo(true)
+                .jsonPath("$.data.generateUsernames.usernames.length()").isEqualTo(3);
+    }
 }

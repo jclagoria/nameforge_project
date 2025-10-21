@@ -1,0 +1,106 @@
+"""
+Supported language for username generation
+"""
+enum Language {
+    """English language"""
+    EN
+
+    """Spanish language"""
+    ES
+}
+
+"""
+Input for username generation request
+"""
+input GenerateUsernamesInput {
+    """
+    Language code for username generation
+    """
+    language: Language
+
+    """
+    Number of usernames to generate (1-10)
+    Default: 1
+    """
+    count: Int = 1
+}
+
+"""
+Response containing generated usernames and metadata
+"""
+type UsernameGenerationResponse {
+    """
+    List of generated usernames
+    """
+    usernames: [String!]!
+
+    """
+    Timestamp when usernames were generated (ISO 8601)
+    """
+    generatedAt: String!
+
+    """
+    Language used for generation
+    """
+    language: Language!
+
+    """
+    Total number of usernames generated
+    """
+    totalGenerated: Int!
+
+    """
+    Indicates if usernames were retrieved from cache
+    """
+    cacheHit: Boolean!
+
+    """
+    Time taken to generate usernames in milliseconds
+    """
+    responseTimeMs: Long!
+}
+
+# ============================================
+# Root Types
+# ============================================
+
+"""
+Query operations (for future read operations)
+"""
+type Query {
+    """
+    Health check query
+    """
+    _health: Boolean!
+}
+
+"""
+Mutation operations for data modification
+"""
+type Mutation {
+    """
+    Generate usernames based on language and count
+
+    Example:
+    mutation {
+    generateUsernames(input: { language: EN, count: 5 }) {
+    usernames
+    generatedAt
+    language
+    totalGenerated
+    cacheHit
+    responseTimeMs
+    }
+    }
+    """
+    generateUsernames(input: GenerateUsernamesInput!): UsernameGenerationResponse!
+}
+
+# ============================================
+# Custom Scalars
+# ============================================
+
+"""
+Long scalar type for large numbers
+"""
+scalar Long
