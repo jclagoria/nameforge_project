@@ -57,14 +57,13 @@ public class OpenAIModerationService implements ModerationService {
     public OpenAIModerationService(
             WebClient webClient,
             ModerationProperties properties,
-            SimpleModerationService fallbackService,
             CircuitBreaker openaiModerationCircuitBreaker,
             Retry openaiModerationRetry,
             TimeLimiter openaiModerationTimeLimiter
     ) {
         this.webClient = webClient;
         this.properties = properties;
-        this.fallbackService = fallbackService;
+        this.fallbackService = new SimpleModerationService(); // Instantiate fallback directly
         this.circuitBreaker = openaiModerationCircuitBreaker;
         this.retry = openaiModerationRetry;
         this.timeLimiter = openaiModerationTimeLimiter;

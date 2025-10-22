@@ -85,10 +85,10 @@ perspective:
   default-language: es
   do-not-store: true
   thresholds:
-    toxicity: ${PERSPECTIVE_TOXICITY_THRESHOLD:0.7}
+    toxicity: ${PERSPECTIVE_TOXICITY_THRESHOLD:0.5}
     severe-toxicity: ${PERSPECTIVE_SEVERE_TOXICITY_THRESHOLD:0.5}
-    identity-attack: ${PERSPECTIVE_IDENTITY_ATTACK_THRESHOLD:0.6}
-    insult: ${PERSPECTIVE_INSULT_THRESHOLD:0.7}
+    identity-attack: ${PERSPECTIVE_IDENTITY_ATTACK_THRESHOLD:0.5}
+    insult: ${PERSPECTIVE_INSULT_THRESHOLD:0.5}
     threat: ${PERSPECTIVE_THREAT_THRESHOLD:0.5}
 
 # SpringDoc OpenAPI Configuration

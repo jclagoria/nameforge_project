@@ -69,12 +69,9 @@ class OpenAIModerationServiceWireMockTest {
         Retry retry = retryRegistry.retry("openai-moderation");
         TimeLimiter timeLimiter = timeLimiterRegistry.timeLimiter("openai-moderation");
 
-        SimpleModerationService fallbackService = new SimpleModerationService();
-
         moderationService = new OpenAIModerationService(
                 webClient,
                 properties,
-                fallbackService,
                 circuitBreaker,
                 retry,
                 timeLimiter

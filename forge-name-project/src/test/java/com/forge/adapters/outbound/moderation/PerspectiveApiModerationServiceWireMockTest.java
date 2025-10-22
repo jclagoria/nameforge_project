@@ -62,7 +62,6 @@ public class PerspectiveApiModerationServiceWireMockTest {
         properties.getPerspective().setThresholds(thresholds);
 
         WebClient webClient = WebClient.builder().build();
-        SimpleModerationService fallbackService = new SimpleModerationService();
 
         // Create real Resilience4j instances
         CircuitBreakerConfig circuitBreakerConfig = CircuitBreakerConfig.custom()
@@ -89,7 +88,7 @@ public class PerspectiveApiModerationServiceWireMockTest {
         TimeLimiter timeLimiter = timeLimiterRegistry.timeLimiter("perspective-moderation-wiremock-test");
 
         service = new PerspectiveApiModerationService(
-                webClient, properties, fallbackService, circuitBreaker, retry, timeLimiter
+                webClient, properties, circuitBreaker, retry, timeLimiter
         );
     }
 
@@ -181,7 +180,7 @@ public class PerspectiveApiModerationServiceWireMockTest {
                         .withFixedDelay(10000))); // Delay longer than timeout
 
         // When & Then
-        StepVerifier.create(service.isAppropriate("testuser"))
+        StepVerifier.create(service.isAppropriate("validuser"))
                 .expectNext(true) // Should fallback to simple service
                 .verifyComplete();
     }
@@ -196,7 +195,7 @@ public class PerspectiveApiModerationServiceWireMockTest {
                         .withBody("Internal Server Error")));
 
         // When & Then
-        StepVerifier.create(service.isAppropriate("testuser"))
+        StepVerifier.create(service.isAppropriate("validuser"))
                 .expectNext(true) // Should fallback to simple service
                 .verifyComplete();
     }

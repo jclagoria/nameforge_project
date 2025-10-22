@@ -24,6 +24,9 @@ public record Username(
     }
 
     public static Username of(String value, Language language) {
+        /**
+         * TODO Changes to calculate Pattern
+         */
         return new Username(value, language, PatternType.CLASSIC);
     }
 

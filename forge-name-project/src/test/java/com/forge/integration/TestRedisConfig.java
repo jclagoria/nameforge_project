@@ -33,7 +33,8 @@ public class TestRedisConfig {
         LettuceClientConfiguration clientConfig = LettuceClientConfiguration.builder()
                 .commandTimeout(Duration.ofSeconds(2))
                 .clientOptions(ClientOptions.builder()
-                        .disconnectedBehavior(ClientOptions.DisconnectedBehavior.REJECT_COMMANDS)
+                        .disconnectedBehavior(ClientOptions.DisconnectedBehavior.DEFAULT)
+                        .autoReconnect(false) // Don't auto-reconnect for tests
                         .build())
                 .build();
 
@@ -42,6 +43,7 @@ public class TestRedisConfig {
                 clientConfig
         );
         factory.setShareNativeConnection(false);
+        factory.setValidateConnection(false); // Don't validate connection for graceful degradation
         factory.afterPropertiesSet();
         return factory;
     }
