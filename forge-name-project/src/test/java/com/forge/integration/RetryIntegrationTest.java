@@ -1,7 +1,6 @@
 package com.forge.integration;
 
 import com.forge.adapters.outbound.moderation.OpenAIModerationService;
-import com.forge.adapters.outbound.moderation.SimpleModerationService;
 import com.forge.infrastructure.properties.ModerationProperties;
 import com.github.tomakehurst.wiremock.junit5.WireMockExtension;
 import io.github.resilience4j.circuitbreaker.CircuitBreaker;
@@ -30,7 +29,7 @@ import static com.github.tomakehurst.wiremock.core.WireMockConfiguration.wireMoc
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * Phase 2: Retry Integration Tests
+ * Retry Integration Tests
  * <p>
  * Tests the retry behavior of the application with real OpenAI moderation service integration.
  * These tests validate:
@@ -110,12 +109,9 @@ class RetryIntegrationTest {
         retry = retryRegistry.retry("openai-moderation-test");
         TimeLimiter timeLimiter = timeLimiterRegistry.timeLimiter("openai-moderation-test");
 
-        SimpleModerationService fallbackService = new SimpleModerationService();
-
         moderationService = new OpenAIModerationService(
                 webClient,
                 properties,
-                fallbackService,
                 circuitBreaker,
                 retry,
                 timeLimiter
@@ -195,8 +191,8 @@ class RetryIntegrationTest {
                         .withBody("Internal Server Error")));
 
         // ACT & ASSERT - Should fallback to SimpleModerationService
-        StepVerifier.create(moderationService.isAppropriate("testuser"))
-                .expectNext(true) // SimpleModerationService approves "testuser"
+        StepVerifier.create(moderationService.isAppropriate("validuser"))
+                .expectNext(true) // SimpleModerationService approves "validuser"
                 .verifyComplete();
 
         // Verify exactly 3 requests were made (1 original + 2 retries)
@@ -232,7 +228,7 @@ class RetryIntegrationTest {
                             """)));
 
         // ACT & ASSERT - Should fallback immediately without retry
-        StepVerifier.create(moderationService.isAppropriate("testuser"))
+        StepVerifier.create(moderationService.isAppropriate("validuser"))
                 .expectNext(true) // SimpleModerationService approves
                 .verifyComplete();
 
@@ -365,7 +361,7 @@ class RetryIntegrationTest {
                             """)));
 
         // ACT & ASSERT - Should fallback immediately without retry
-        StepVerifier.create(moderationService.isAppropriate("testuser"))
+        StepVerifier.create(moderationService.isAppropriate("validuser"))
                 .expectNext(true) // SimpleModerationService approves
                 .verifyComplete();
 

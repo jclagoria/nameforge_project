@@ -50,3 +50,4 @@ log/
 *.log
 
 /docs/
+/claudedocs/

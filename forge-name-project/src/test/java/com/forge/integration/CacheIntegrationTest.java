@@ -29,7 +29,10 @@ import static org.assertj.core.api.Assertions.assertThat;
         webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT,
         classes = {ForgeNameApplication.class, TestRedisConfig.class},
         properties = {
-                "spring.main.allow-bean-definition-overriding=true"
+                "spring.main.allow-bean-definition-overriding=true",
+                // Enable SimpleModerationService by disabling external APIs
+                "moderation.openai.enabled=false",
+                "moderation.perspective.enabled=false"
         }
 )
 @AutoConfigureWebTestClient

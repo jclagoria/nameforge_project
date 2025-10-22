@@ -58,7 +58,6 @@ class OpenAIModerationServiceTest {
     private TimeLimiter timeLimiter;
 
     private ModerationProperties properties;
-    private SimpleModerationService fallbackService;
     private OpenAIModerationService moderationService;
 
     @BeforeEach
@@ -67,8 +66,6 @@ class OpenAIModerationServiceTest {
         properties.getOpenai().setApiKey("test-key");
         properties.getOpenai().setEnabled(true);
         properties.getOpenai().setTimeout(Duration.ofSeconds(5));
-
-        fallbackService = new SimpleModerationService();
 
         // Create real Resilience4j instances (not mocks) because reactive operators need real config
         CircuitBreakerConfig circuitBreakerConfig = CircuitBreakerConfig.custom()
@@ -97,7 +94,6 @@ class OpenAIModerationServiceTest {
         moderationService = new OpenAIModerationService(
                 webClient,
                 properties,
-                fallbackService,
                 circuitBreaker,
                 retry,
                 timeLimiter
@@ -143,7 +139,7 @@ class OpenAIModerationServiceTest {
                 .thenReturn(Mono.error(new WebClientResponseException(500, "Server Error", null, null, null)));
 
         // ACT & ASSERT
-        StepVerifier.create(moderationService.isAppropriate("testuser"))
+        StepVerifier.create(moderationService.isAppropriate("validuser"))
                 .expectNext(true) // Falls back to SimpleModerationService
                 .verifyComplete();
     }
@@ -162,7 +158,7 @@ class OpenAIModerationServiceTest {
                         .then(Mono.just(createModerationResponse(false))));
 
         // ACT & ASSERT
-        StepVerifier.create(moderationService.isAppropriate("testuser"))
+        StepVerifier.create(moderationService.isAppropriate("validuser"))
                 .expectNext(true) // Falls back on timeout
                 .verifyComplete();
     }
@@ -175,14 +171,13 @@ class OpenAIModerationServiceTest {
         moderationService = new OpenAIModerationService(
                 webClient,
                 properties,
-                fallbackService,
                 circuitBreaker,
                 retry,
                 timeLimiter
         );
 
         // ACT & ASSERT
-        StepVerifier.create(moderationService.isAppropriate("testuser"))
+        StepVerifier.create(moderationService.isAppropriate("validuser"))
                 .expectNext(true)
                 .verifyComplete();
 
@@ -200,7 +195,7 @@ class OpenAIModerationServiceTest {
         setupWebClientMock(response);
 
         // ACT & ASSERT
-        StepVerifier.create(moderationService.isAppropriate("testuser"))
+        StepVerifier.create(moderationService.isAppropriate("validuser"))
                 .expectNext(true) // Defaults to appropriate
                 .verifyComplete();
     }
@@ -216,7 +211,7 @@ class OpenAIModerationServiceTest {
         setupWebClientMock(response);
 
         // ACT & ASSERT
-        StepVerifier.create(moderationService.isAppropriate("testuser"))
+        StepVerifier.create(moderationService.isAppropriate("validuser"))
                 .expectNext(true) // Defaults to appropriate
                 .verifyComplete();
     }

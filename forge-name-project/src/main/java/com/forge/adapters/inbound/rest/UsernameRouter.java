@@ -1,5 +1,6 @@
 package com.forge.adapters.inbound.rest;
 
+import com.forge.adapters.inbound.dto.ValidationResponseDto;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.enums.ParameterIn;
@@ -73,15 +74,81 @@ public class UsernameRouter {
                                     )
                             }
                     )
+            ),
+            @RouterOperation(
+                    path = "/api/v1/usernames/validate/{username}",
+                    method = RequestMethod.GET,
+                    beanClass = UsernameHandler.class,
+                    beanMethod = "validate",
+                    operation = @Operation(
+                            operationId = "validateUsername",
+                            summary = "Validate Username",
+                            description = "Validate username format, uniqueness, and appropriateness",
+                            tags = {"Username Validation"},
+                            parameters = {
+                                    @Parameter(
+                                            name = "username",
+                                            description = "Username to validate (5-30 chars, [a-z0-9_-])",
+                                            required = true,
+                                            in = ParameterIn.PATH,
+                                            schema = @Schema(
+                                                    type = "string",
+                                                    pattern = "^[a-z0-9_-]{5,30}$",
+                                                    example = "cleverpanda42"
+                                            )
+                                    ),
+                                    @Parameter(
+                                            name = "language",
+                                            description = "Language for content moderation",
+                                            required = false,
+                                            in = ParameterIn.QUERY,
+                                            schema = @Schema(
+                                                    type = "string",
+                                                    allowableValues = {"EN", "ES"},
+                                                    defaultValue = "EN"
+                                            )
+                                    )
+                            },
+                            responses = {
+                                    @ApiResponse(
+                                            responseCode = "200",
+                                            description = "Validation result",
+                                            content = @Content(
+                                                    mediaType = "application/json",
+                                                    schema = @Schema(implementation = ValidationResponseDto.class)
+                                            )
+                                    ),
+                                    @ApiResponse(
+                                            responseCode = "400",
+                                            description = "Invalid request",
+                                            content = @Content(
+                                                    mediaType = "application/json",
+                                                    schema = @Schema(implementation = ErrorResponseDto.class)
+                                            )
+                                    ),
+                                    @ApiResponse(
+                                            responseCode = "500",
+                                            description = "Internal server error",
+                                            content = @Content(
+                                                    mediaType = "application/json",
+                                                    schema = @Schema(implementation = ErrorResponseDto.class)
+                                            )
+                                    )
+                            }
+                    )
             )
     })
     public RouterFunction<ServerResponse> usernamesRouter(UsernameHandler handler) {
         return route()
                 .path("/api/v1/usernames", builder ->
-                        builder.POST("/generate",
-                                accept(MediaType.APPLICATION_JSON)
-                                        .and(contentType(MediaType.APPLICATION_JSON)),
-                                handler::generate)
+                        builder
+                                .POST("/generate",
+                                        accept(MediaType.APPLICATION_JSON)
+                                                .and(contentType(MediaType.APPLICATION_JSON)),
+                                        handler::generate)
+                                .GET("/validate/{username}",
+                                        accept(MediaType.APPLICATION_JSON),
+                                        handler::validate)
                 )
                 .build();
     }

@@ -48,9 +48,6 @@ class PerspectiveApiModerationServiceTest {
     @Mock
     private WebClient.ResponseSpec responseSpec;
 
-    @Mock
-    private SimpleModerationService fallbackService;
-
     private CircuitBreaker circuitBreaker;
     private Retry retry;
     private TimeLimiter timeLimiter;
@@ -102,7 +99,7 @@ class PerspectiveApiModerationServiceTest {
         timeLimiter = timeLimiterRegistry.timeLimiter("perspective-moderation-test");
 
         service = new PerspectiveApiModerationService(
-                webClient, properties, fallbackService, circuitBreaker, retry, timeLimiter
+                webClient, properties, circuitBreaker, retry, timeLimiter
         );
     }
 
@@ -181,14 +178,10 @@ class PerspectiveApiModerationServiceTest {
                 .thenReturn(Mono.error(new WebClientResponseException(500, "Internal Server Error",
                         null, null, null)));
 
-        when(fallbackService.isAppropriate(anyString())).thenReturn(Mono.just(true));
-
-        // When & Then
-        StepVerifier.create(service.isAppropriate(username))
+        // When & Then - Falls back to SimpleModerationService
+        StepVerifier.create(service.isAppropriate("validuser"))
                 .expectNext(true)
                 .verifyComplete();
-
-        verify(fallbackService, times(1)).isAppropriate(anyString());
     }
 
     @Test
@@ -196,16 +189,13 @@ class PerspectiveApiModerationServiceTest {
     void shouldUseFallbackWhenDisabled() {
         // Given
         properties.getPerspective().setEnabled(false);
-        String username = "testuser";
+        String username = "validuser";
 
-        when(fallbackService.isAppropriate(username)).thenReturn(Mono.just(true));
-
-        // When & Then
+        // When & Then - Uses SimpleModerationService directly
         StepVerifier.create(service.isAppropriate(username))
                 .expectNext(true)
                 .verifyComplete();
 
-        verify(fallbackService, times(1)).isAppropriate(username);
         verifyNoInteractions(webClient);
     }
 

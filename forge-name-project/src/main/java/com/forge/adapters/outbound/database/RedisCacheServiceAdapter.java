@@ -33,10 +33,14 @@ public class RedisCacheServiceAdapter implements CacheService {
     public Flux<Username> getCachedUsernames(Language language, int count) {
         String key = USERNAME_CACHE_PREFIX + language.name();
 
-        return redisTemplate.opsForList()
-                .range(key, 0, count - 1)
-                .flatMap(this::deserializeUsername)
-                .take(count);
+        return Flux.defer(() -> redisTemplate.opsForList()
+                        .range(key, 0, count - 1)
+                        .flatMap(this::deserializeUsername)
+                        .take(count))
+                .onErrorResume(error -> {
+                    // Gracefully handle Redis failures - return empty cache
+                    return Flux.empty();
+                });
     }
 
     @Override
@@ -75,14 +79,19 @@ public class RedisCacheServiceAdapter implements CacheService {
 
                                 return Mono.when(listOp, bloomOp, expireOp);
                             });
+                })
+                .onErrorResume(error -> {
+                    // Gracefully handle Redis failures - continue without caching
+                    return Mono.empty();
                 });
     }
 
     @Override
     public Mono<Boolean> mightExist(String username) {
-        return redisTemplate.opsForSet()
-                .isMember(BLOOM_FILER_PREFIX, username)
-                .defaultIfEmpty(false);
+        return Mono.defer(() -> redisTemplate.opsForSet()
+                        .isMember(BLOOM_FILER_PREFIX, username)
+                        .defaultIfEmpty(false))
+                .onErrorReturn(false); // Gracefully handle Redis failures - assume not exists
     }
 
     private Mono<String> serializeUsername(Username username) {

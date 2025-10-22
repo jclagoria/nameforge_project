@@ -69,14 +69,13 @@ public class PerspectiveApiModerationService implements ModerationService {
     public PerspectiveApiModerationService(
             WebClient moderationWebClient,
             ModerationProperties properties,
-            SimpleModerationService fallbackService,
             CircuitBreaker perspectiveModerationCircuitBreaker,
             Retry perspectiveModerationRetry,
             TimeLimiter perspectiveModerationTimeLimiter
     ) {
         this.webClient = moderationWebClient;
         this.properties = properties;
-        this.fallbackService = fallbackService;
+        this.fallbackService = new SimpleModerationService(); // Instantiate fallback directly
         this.circuitBreaker = perspectiveModerationCircuitBreaker;
         this.retry = perspectiveModerationRetry;
         this.timeLimiter = perspectiveModerationTimeLimiter;
@@ -90,10 +89,10 @@ public class PerspectiveApiModerationService implements ModerationService {
             log.debug("Perspective API disabled, using fallback service");
             return fallbackService.isAppropriate(username);
         }
-
+        log.info("en el metodo isAppropiate");
         return callPerspectiveApiWithResilience(username)
                 .doOnSuccess(result -> log.debug("Username '{}' moderation result: {}", username, result))
-                .onErrorResume(this::handleError);
+                .onErrorResume(error -> handleError(error, username));
     }
 
     /**
@@ -101,6 +100,8 @@ public class PerspectiveApiModerationService implements ModerationService {
      * TimeLimiter → Retry → CircuitBreaker → API Call
      */
     private Mono<Boolean> callPerspectiveApiWithResilience(String username) {
+        log.info("en el metodo callPerspectiveApiWithResilience");
+
         return callPerspectiveApi(username)
                 // 1. Circuit Breaker - prevents cascading failures
                 .transformDeferred(CircuitBreakerOperator.of(circuitBreaker))
@@ -118,6 +119,7 @@ public class PerspectiveApiModerationService implements ModerationService {
      * Core API call to Perspective API endpoint.
      */
     private Mono<Boolean> callPerspectiveApi(String username) {
+        log.info("en el metodo callPerspectiveApi");
         PerspectiveRequest request = buildRequest(username);
         String apiUrl = properties.getPerspective().getEndpoint()
                 + "?key=" + properties.getPerspective().getApiKey();
@@ -139,6 +141,8 @@ public class PerspectiveApiModerationService implements ModerationService {
      * Builds the Perspective API request payload.
      */
     private PerspectiveRequest buildRequest(String username) {
+        log.info("en el metodo buildRequest");
+
         Map<String, String> requestedAttributes = Map.of(
                 TOXICITY, "{}",
                 SEVERE_TOXICITY, "{}",
@@ -161,6 +165,8 @@ public class PerspectiveApiModerationService implements ModerationService {
      * Evaluates the API response against configured thresholds.
      */
     private Boolean evaluateResponse(PerspectiveResponse response, String username) {
+        log.info("en el metodo evaluateResponse");
+
         if (response.getAttributeScores() == null || response.getAttributeScores().isEmpty()) {
             log.warn("Empty attribute scores in Perspective API response, defaulting to appropriate");
             return true;
@@ -177,7 +183,7 @@ public class PerspectiveApiModerationService implements ModerationService {
 
         boolean isAppropriated = !isToxic && !isSevereToxic && !isIdentityAttack && !isInsult && !isThreat;
 
-        if (!isAppropriated) {
+        //if (!isAppropriated) {
             log.info("Username '{}' flagged by Perspective API - Scores: " +
                             "TOXICITY={}, SEVERE_TOXICITY={}, IDENTITY_ATTACK={}, INSULT={}, THREAT={}",
                     username,
@@ -186,7 +192,7 @@ public class PerspectiveApiModerationService implements ModerationService {
                     getScore(response, IDENTITY_ATTACK),
                     getScore(response, INSULT),
                     getScore(response, THREAT));
-        }
+        //}
 
         return isAppropriated;
     }
@@ -196,6 +202,8 @@ public class PerspectiveApiModerationService implements ModerationService {
      */
     private boolean checkAttribute(PerspectiveResponse response, String attributeName,
                                    Double threshold, String username) {
+        log.info("en el metodo checkAttribute");
+
         PerspectiveResponse.AttributeScore attributeScore = response.getAttributeScores().get(attributeName);
 
         if (attributeScore == null || attributeScore.getSummaryScore() == null) {
@@ -218,6 +226,8 @@ public class PerspectiveApiModerationService implements ModerationService {
      * Used for logging purposes.
      */
     private Double getScore(PerspectiveResponse response, String attributeName) {
+        log.info("en el metodo getScore");
+
         PerspectiveResponse.AttributeScore attributeScore = response.getAttributeScores().get(attributeName);
 
         if (attributeScore != null && attributeScore.getSummaryScore() != null) {
@@ -229,36 +239,43 @@ public class PerspectiveApiModerationService implements ModerationService {
 
     /**
      * Handles errors with intelligent fallback strategy.
+     * @param error The error that occurred during Perspective API call
+     * @param username The username being validated (passed to fallback service)
+     * @return Mono with fallback validation result
      */
-    private Mono<Boolean> handleError(Throwable error) {
+    private Mono<Boolean> handleError(Throwable error, String username) {
+        log.info("en el metodo handleError");
+
         String errorType = ErrorClassification.classifyError(error);
 
         // Special handling for rate limit errors
         if (ErrorClassification.isRateLimitError(error)) {
-            log.warn("Perspective API rate limit reached [429], falling back to simple moderation");
-            return fallbackService.isAppropriate("rate-limited")
-                    .doOnNext(result -> log.info("Fallback service used due to rate limit"));
+            log.warn("Perspective API rate limit reached [429] for username '{}', falling back to simple moderation", username);
+            return fallbackService.isAppropriate(username)
+                    .doOnNext(result -> log.info("Fallback service used for '{}' due to rate limit, result: {}", username, result));
         }
 
         // Circuit breaker open - use fallback immediately
         if (error.getMessage() != null && error.getMessage().contains("CircuitBreaker")) {
-            log.warn("Circuit breaker OPEN for Perspective API, using fallback service");
-            return fallbackService.isAppropriate("circuit-open")
-                    .doOnNext(result -> log.info("Fallback service used due to circuit breaker"));
+            log.warn("Circuit breaker OPEN for Perspective API, using fallback service for username '{}'", username);
+            return fallbackService.isAppropriate(username)
+                    .doOnNext(result -> log.info("Fallback service used for '{}' due to circuit breaker, result: {}", username, result));
         }
 
         // For all other errors, use fallback
-        log.error("Perspective API failed [{}], using fallback service: {}",
-                errorType, error.getMessage());
+        log.error("Perspective API failed [{}] for username '{}', using fallback service: {}",
+                errorType, username, error.getMessage());
 
-        return fallbackService.isAppropriate("error-fallback")
-                .doOnNext(result -> log.info("Fallback service used due to error"));
+        return fallbackService.isAppropriate(username)
+                .doOnNext(result -> log.info("Fallback service used for '{}' due to error, result: {}", username, result));
     }
 
     /**
      * Logs HTTP errors with detailed information.
      */
     private void logHttpError(WebClientResponseException error) {
+        log.info("en el metodo logHttpError");
+
         int status = error.getStatusCode().value();
         String body = error.getResponseBodyAsString();
 
@@ -275,6 +292,8 @@ public class PerspectiveApiModerationService implements ModerationService {
      * Logs network and connectivity errors.
      */
     private void logNetworkError(WebClientException error) {
+        log.info("en el metodo logNetworkError");
+
         String cause = error.getCause() != null ? error.getCause().getMessage() : "Unknown";
         log.error("Network error calling Perspective API: {} - Cause: {}", error.getMessage(), cause);
     }
