@@ -1,3 +1,58 @@
+# ============================================
+# Root Types
+# ============================================
+
+"""
+Query operations (for future read operations)
+"""
+type Query {
+    """
+    Health check query
+    """
+    _health: Boolean!
+
+    """
+    Validate a specific username
+
+    Example:
+    query {
+        validateUsername(username: "cleverpanda42", language: EN) {
+            username
+            isValid
+            isUnique
+            isAppropriate
+            isValidFormat
+            reasons
+            confidenceScore
+            validatedAt
+        }
+    }
+    """
+    validateUsername(username: String!, language: Language = EN): ValidationResponse!
+}
+
+"""
+Mutation operations for data modification
+"""
+type Mutation {
+    """
+    Generate usernames based on language and count
+
+    Example:
+    mutation {
+    generateUsernames(input: { language: EN, count: 5 }) {
+    usernames
+    generatedAt
+    language
+    totalGenerated
+    cacheHit
+    responseTimeMs
+    }
+    }
+    """
+    generateUsernames(input: GenerateUsernamesInput!): UsernameGenerationResponse!
+}
+
 """
 Supported language for username generation
 """
@@ -24,6 +79,7 @@ input GenerateUsernamesInput {
     """
     count: Int = 1
 }
+
 
 """
 Response containing generated usernames and metadata
@@ -60,40 +116,49 @@ type UsernameGenerationResponse {
     responseTimeMs: Long!
 }
 
-# ============================================
-# Root Types
-# ============================================
+"""
+Response containing username validation results
+"""
+type ValidationResponse {
+    """
+    The username that was validated
+    """
+    username: String!
 
-"""
-Query operations (for future read operations)
-"""
-type Query {
     """
-    Health check query
+    Overall validation result (true if all checks pass)
     """
-    _health: Boolean!
-}
+    isValid: Boolean!
 
-"""
-Mutation operations for data modification
-"""
-type Mutation {
     """
-    Generate usernames based on language and count
+    Username is unique (not already taken)
+    """
+    isUnique: Boolean!
 
-    Example:
-    mutation {
-    generateUsernames(input: { language: EN, count: 5 }) {
-    usernames
-    generatedAt
-    language
-    totalGenerated
-    cacheHit
-    responseTimeMs
-    }
-    }
     """
-    generateUsernames(input: GenerateUsernamesInput!): UsernameGenerationResponse!
+    Username passes content moderation
+    """
+    isAppropriate: Boolean!
+
+    """
+    Username matches format requirements
+    """
+    isValidFormat: Boolean!
+
+    """
+    List of validation failure reasons (empty if valid)
+    """
+    reasons: [String!]!
+
+    """
+    Confidence score (0.0-1.0) indicating validation certainty
+    """
+    confidenceScore: Float!
+
+    """
+    Timestamp when validation was performed (ISO 8601)
+    """
+    validatedAt: String!
 }
 
 # ============================================
