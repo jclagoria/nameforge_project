@@ -5,6 +5,7 @@ import com.forge.domain.model.Username;
 import com.forge.domain.model.ValidationRequest;
 import com.forge.domain.model.ValidationResult;
 import com.forge.domain.ports.inbound.UsernameValidationUseCase;
+import com.forge.domain.ports.outboung.CacheService;
 import com.forge.domain.ports.outboung.ModerationService;
 import com.forge.domain.ports.outboung.UsernameRepository;
 import lombok.RequiredArgsConstructor;
@@ -26,25 +27,19 @@ public class UsernameValidationUseCaseImpl implements UsernameValidationUseCase 
 
     private final UsernameRepository usernameRepository;
     private final ModerationService moderationService;
+    private final CacheService cacheService;
 
     @Override
     public Mono<ValidationResult> validate(ValidationRequest request) {
-        Instant validatedAt = Instant.now();
 
-        return validateFormat(request.username(), request.language())
-                .flatMap(formatResult -> {
-                    if (!formatResult.isValidFormat()) {
-                        return Mono.just(formatResult);
-                    }
-
-                    return validateUniqueness(request.username())
-                            .flatMap(isUnique -> validationAppropriateness(
-                                    request.username(),
-                                    request.language(),
-                                    isUnique,
-                                    validatedAt
-                            ));
-                });
+        return cacheService.getCachedValidation(request.username(), request.language())
+                .switchIfEmpty(Mono.defer(() -> {
+                    // Cache miss - perform full validation
+                    log.debug("Cache MISS for validation: username={}, language={}",
+                            request.username(), request.language());
+                    return performFullValidation(request)
+                            .flatMap(result -> cacheValidationResult(request, result));
+                }));
     }
 
     private Mono<ValidationResult> validateFormat(String username, Language language) {
@@ -96,6 +91,37 @@ public class UsernameValidationUseCaseImpl implements UsernameValidationUseCase 
                         isAppropriate,
                         validatedAt
                 ));
+    }
+
+    private Mono<ValidationResult> performFullValidation(ValidationRequest request) {
+        Instant validatedAt = Instant.now();
+
+        return validateFormat(request.username(), request.language())
+                .flatMap(formatResult -> {
+                    if (!formatResult.isValidFormat()) {
+                        return Mono.just(formatResult);
+                    }
+
+                    return validateUniqueness(request.username())
+                            .flatMap(isUnique -> validationAppropriateness(
+                                    request.username(),
+                                    request.language(),
+                                    isUnique,
+                                    validatedAt)
+                            );
+                });
+    }
+
+    private Mono<ValidationResult> cacheValidationResult(
+            ValidationRequest request,
+            ValidationResult result
+    ) {
+        return cacheService.cacheValidation(request.username(), request.language(), result)
+                .thenReturn(result)
+                .onErrorResume(error -> {
+                    log.warn("Failed to cache validation (continuing): {}", error.getMessage());
+                    return Mono.just(result);  // Continue even if caching fails
+                });
     }
 
     private ValidationResult buildValidationResult(

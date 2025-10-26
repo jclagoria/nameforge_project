@@ -2,6 +2,7 @@ package com.forge.domain.ports.outboung;
 
 import com.forge.domain.model.Language;
 import com.forge.domain.model.Username;
+import com.forge.domain.model.ValidationResult;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
@@ -36,4 +37,31 @@ public interface CacheService {
      */
     Mono<Boolean> mightExist(String username);
 
+    /**
+     * Retrieves cached validation result for a username and language.
+     *
+     * @param username the username to validate
+     * @param language the language context
+     * @return Mono<ValidationResult> cached validation result, or empty if not cached
+     */
+    Mono<ValidationResult> getCachedValidation(String username, Language language);
+
+    /**
+     * Caches a validation result for a username and language.
+     *
+     * @param username the username
+     * @param language the language context
+     * @param result the validation result to cache
+     * @return Mono<Void> completion signal
+     */
+    Mono<Void> cacheValidation(String username, Language language, ValidationResult result);
+
+    /**
+     * Invalidates cached validation for a specific username.
+     * Useful when username is taken or rules change.
+     *
+     * @param username the username to invalidate
+     * @return Mono<Void> completion signal
+     */
+    Mono<Void> invalidateValidation(String username);
 }

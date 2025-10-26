@@ -204,6 +204,188 @@ class RestEndpointIntegrationTest {
                     .jsonPath("$.isValid").isEqualTo(true)
                     .jsonPath("$.isValidFormat").isEqualTo(true);
         }
+
+        @Test
+        @DisplayName("Should return cached validation result on second request with same username and language")
+        void shouldReturnCachedValidationResultOnSecondRequestWithSameUsernameAndLanguage() {
+            // Given
+            String username = "cacheduser123";
+
+            // First request - cache miss, perform full validation
+            webTestClient.get()
+                    .uri("/api/v1/usernames/validate/{username}?language=EN", username)
+                    .accept(MediaType.APPLICATION_JSON)
+                    .exchange()
+                    .expectStatus().isOk()
+                    .expectBody()
+                    .jsonPath("$.username").isEqualTo(username)
+                    .jsonPath("$.isValid").isEqualTo(true);
+
+            // Second request - should hit cache (same username, same language)
+            webTestClient.get()
+                    .uri("/api/v1/usernames/validate/{username}?language=EN", username)
+                    .accept(MediaType.APPLICATION_JSON)
+                    .exchange()
+                    .expectStatus().isOk()
+                    .expectBody()
+                    .jsonPath("$.username").isEqualTo(username)
+                    .jsonPath("$.isValid").isEqualTo(true)
+                    .jsonPath("$.isValidFormat").isEqualTo(true)
+                    .jsonPath("$.isUnique").isEqualTo(true);
+
+            // Verify Redis cache contains the validation result
+            String cacheKey = "validation:usernames" + username.toLowerCase() + ":en:V1";
+            Boolean hasKey = redisTemplate.hasKey(cacheKey).block();
+            assertThat(hasKey).isTrue();
+        }
+
+        @Test
+        @DisplayName("Should cache validation results separately for different languages")
+        void shouldCacheValidationResultsSeparatelyForDifferentLanguages() {
+            // Given
+            String username = "multilingualuser";
+
+            // Validate with English
+            webTestClient.get()
+                    .uri("/api/v1/usernames/validate/{username}?language=EN", username)
+                    .accept(MediaType.APPLICATION_JSON)
+                    .exchange()
+                    .expectStatus().isOk()
+                    .expectBody()
+                    .jsonPath("$.username").isEqualTo(username)
+                    .jsonPath("$.isValid").isEqualTo(true);
+
+            // Validate with Spanish
+            webTestClient.get()
+                    .uri("/api/v1/usernames/validate/{username}?language=ES", username)
+                    .accept(MediaType.APPLICATION_JSON)
+                    .exchange()
+                    .expectStatus().isOk()
+                    .expectBody()
+                    .jsonPath("$.username").isEqualTo(username)
+                    .jsonPath("$.isValid").isEqualTo(true);
+
+            // Verify both cache keys exist
+            String cacheKeyEN = "validation:usernames" + username.toLowerCase() + ":en:V1";
+            String cacheKeyES = "validation:usernames" + username.toLowerCase() + ":es:V1";
+
+            Boolean hasKeyEN = redisTemplate.hasKey(cacheKeyEN).block();
+            Boolean hasKeyES = redisTemplate.hasKey(cacheKeyES).block();
+
+            assertThat(hasKeyEN).as("English validation should be cached").isTrue();
+            assertThat(hasKeyES).as("Spanish validation should be cached").isTrue();
+        }
+
+        @Test
+        @DisplayName("Should cache invalid validation results")
+        void shouldCacheInvalidValidationResults() {
+            // Given - invalid username (too short)
+            String invalidUsername = "abc";
+
+            // First request - cache miss
+            webTestClient.get()
+                    .uri("/api/v1/usernames/validate/{username}?language=EN", invalidUsername)
+                    .accept(MediaType.APPLICATION_JSON)
+                    .exchange()
+                    .expectStatus().isOk()
+                    .expectBody()
+                    .jsonPath("$.username").isEqualTo(invalidUsername)
+                    .jsonPath("$.isValid").isEqualTo(false)
+                    .jsonPath("$.isValidFormat").isEqualTo(false);
+
+            // Second request - should return cached invalid result
+            webTestClient.get()
+                    .uri("/api/v1/usernames/validate/{username}?language=EN", invalidUsername)
+                    .accept(MediaType.APPLICATION_JSON)
+                    .exchange()
+                    .expectStatus().isOk()
+                    .expectBody()
+                    .jsonPath("$.username").isEqualTo(invalidUsername)
+                    .jsonPath("$.isValid").isEqualTo(false)
+                    .jsonPath("$.isValidFormat").isEqualTo(false);
+
+            // Verify cache contains invalid result
+            String cacheKey = "validation:usernames" + invalidUsername.toLowerCase() + ":en:V1";
+            Boolean hasKey = redisTemplate.hasKey(cacheKey).block();
+            assertThat(hasKey).as("Invalid validation result should be cached").isTrue();
+        }
+
+        @Test
+        @DisplayName("Should cache non-unique username validation results")
+        void shouldCacheNonUniqueUsernameValidationResults() {
+            // Given - insert existing username into database
+            String existingUsername = "cached_existing_user";
+            databaseClient.sql(
+                    "INSERT INTO generated_usernames (username, language, pattern_type, created_at) " +
+                    "VALUES (:username, 'EN', 'CLASSIC', NOW())"
+            )
+            .bind("username", existingUsername)
+            .fetch()
+            .rowsUpdated()
+            .block();
+
+            // First validation - cache miss, detects non-unique
+            webTestClient.get()
+                    .uri("/api/v1/usernames/validate/{username}?language=EN", existingUsername)
+                    .accept(MediaType.APPLICATION_JSON)
+                    .exchange()
+                    .expectStatus().isOk()
+                    .expectBody()
+                    .jsonPath("$.username").isEqualTo(existingUsername)
+                    .jsonPath("$.isValid").isEqualTo(false)
+                    .jsonPath("$.isUnique").isEqualTo(false);
+
+            // Second validation - should return cached non-unique result
+            webTestClient.get()
+                    .uri("/api/v1/usernames/validate/{username}?language=EN", existingUsername)
+                    .accept(MediaType.APPLICATION_JSON)
+                    .exchange()
+                    .expectStatus().isOk()
+                    .expectBody()
+                    .jsonPath("$.username").isEqualTo(existingUsername)
+                    .jsonPath("$.isValid").isEqualTo(false)
+                    .jsonPath("$.isUnique").isEqualTo(false);
+
+            // Verify cache contains the result
+            String cacheKey = "validation:usernames" + existingUsername.toLowerCase() + ":en:V1";
+            Boolean hasKey = redisTemplate.hasKey(cacheKey).block();
+            assertThat(hasKey).as("Non-unique validation result should be cached").isTrue();
+        }
+
+        @Test
+        @DisplayName("Should demonstrate validation performance improvement with cache")
+        void shouldDemonstrateValidationPerformanceImprovementWithCache() {
+            // Given
+            String username = "performancetest123";
+
+            // First request - cache miss (will be slower due to full validation)
+            long start1 = System.currentTimeMillis();
+            webTestClient.get()
+                    .uri("/api/v1/usernames/validate/{username}?language=EN", username)
+                    .accept(MediaType.APPLICATION_JSON)
+                    .exchange()
+                    .expectStatus().isOk()
+                    .expectBody()
+                    .jsonPath("$.username").isEqualTo(username);
+            long duration1 = System.currentTimeMillis() - start1;
+
+            // Second request - cache hit (should be faster)
+            long start2 = System.currentTimeMillis();
+            webTestClient.get()
+                    .uri("/api/v1/usernames/validate/{username}?language=EN", username)
+                    .accept(MediaType.APPLICATION_JSON)
+                    .exchange()
+                    .expectStatus().isOk()
+                    .expectBody()
+                    .jsonPath("$.username").isEqualTo(username);
+            long duration2 = System.currentTimeMillis() - start2;
+
+            // Cache hit should be faster (or at least not significantly slower)
+            assertThat(duration2)
+                    .as("Cache hit (%dms) should be faster or similar to cache miss (%dms)",
+                            duration2, duration1)
+                    .isLessThanOrEqualTo(duration1 + 50); // Allow 50ms margin for test variance
+        }
     }
 
     @Nested

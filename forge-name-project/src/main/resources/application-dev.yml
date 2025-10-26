@@ -25,6 +25,8 @@ spring:
   data:
     redis:
       timeout: 1500ms
+      repositories:
+        enabled: true  # Enable Redis cache service adapter
       lettuce:
         pool:
           max-active: 15

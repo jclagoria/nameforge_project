@@ -552,4 +552,213 @@ class UsernameValidationGraphQLIntegrationTest {
                 .jsonPath("$.data.validateUsername.isAppropriate").exists()
                 .jsonPath("$.data.validateUsername.isValidFormat").exists();
     }
+
+    @Test
+    @DisplayName("Should return cached validation result on second GraphQL request")
+    void shouldReturnCachedValidationResultOnSecondGraphQLRequest() {
+        // Given
+        String query = """
+            {
+              "query": "query { validateUsername(username: \\"cached_graphql_user\\", language: EN) { username isValid isUnique isValidFormat } }"
+            }
+            """;
+
+        // First request - cache miss
+        webTestClient.post()
+                .uri("/graphql")
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(query)
+                .exchange()
+                .expectStatus().isOk()
+                .expectBody()
+                .jsonPath("$.data.validateUsername.username").isEqualTo("cached_graphql_user")
+                .jsonPath("$.data.validateUsername.isValid").isBoolean();
+
+        // Second request - should hit cache
+        webTestClient.post()
+                .uri("/graphql")
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(query)
+                .exchange()
+                .expectStatus().isOk()
+                .expectBody()
+                .jsonPath("$.data.validateUsername.username").isEqualTo("cached_graphql_user")
+                .jsonPath("$.data.validateUsername.isValid").isBoolean();
+
+        // Verify cache contains the validation
+        String cacheKey = "validation:usernamescached_graphql_user:en:V1";
+        Boolean hasKey = redisTemplate.hasKey(cacheKey).block();
+        assertThat(hasKey).as("Validation should be cached in Redis").isTrue();
+    }
+
+    @Test
+    @DisplayName("Should cache GraphQL validation results separately by language")
+    void shouldCacheGraphQLValidationResultsSeparatelyByLanguage() {
+        // Given
+        String queryEN = """
+            {
+              "query": "query { validateUsername(username: \\"multilingual_gql_user\\", language: EN) { username isValid } }"
+            }
+            """;
+
+        String queryES = """
+            {
+              "query": "query { validateUsername(username: \\"multilingual_gql_user\\", language: ES) { username isValid } }"
+            }
+            """;
+
+        // Validate with English
+        webTestClient.post()
+                .uri("/graphql")
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(queryEN)
+                .exchange()
+                .expectStatus().isOk()
+                .expectBody()
+                .jsonPath("$.data.validateUsername.username").isEqualTo("multilingual_gql_user");
+
+        // Validate with Spanish
+        webTestClient.post()
+                .uri("/graphql")
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(queryES)
+                .exchange()
+                .expectStatus().isOk()
+                .expectBody()
+                .jsonPath("$.data.validateUsername.username").isEqualTo("multilingual_gql_user");
+
+        // Verify both language-specific cache keys exist
+        String cacheKeyEN = "validation:usernamesmultilingual_gql_user:en:V1";
+        String cacheKeyES = "validation:usernamesmultilingual_gql_user:es:V1";
+
+        Boolean hasKeyEN = redisTemplate.hasKey(cacheKeyEN).block();
+        Boolean hasKeyES = redisTemplate.hasKey(cacheKeyES).block();
+
+        assertThat(hasKeyEN).as("English validation should be cached").isTrue();
+        assertThat(hasKeyES).as("Spanish validation should be cached").isTrue();
+    }
+
+    @Test
+    @DisplayName("Should cache invalid validation results via GraphQL")
+    void shouldCacheInvalidValidationResultsViaGraphQL() {
+        // Given - invalid username (too short)
+        String query = """
+            {
+              "query": "query { validateUsername(username: \\"xy\\", language: EN) { username isValid isValidFormat reasons } }"
+            }
+            """;
+
+        // First request
+        webTestClient.post()
+                .uri("/graphql")
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(query)
+                .exchange()
+                .expectStatus().isOk()
+                .expectBody()
+                .jsonPath("$.data.validateUsername.username").isEqualTo("xy")
+                .jsonPath("$.data.validateUsername.isValid").isEqualTo(false)
+                .jsonPath("$.data.validateUsername.isValidFormat").isEqualTo(false);
+
+        // Second request - should use cached result
+        webTestClient.post()
+                .uri("/graphql")
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(query)
+                .exchange()
+                .expectStatus().isOk()
+                .expectBody()
+                .jsonPath("$.data.validateUsername.username").isEqualTo("xy")
+                .jsonPath("$.data.validateUsername.isValid").isEqualTo(false);
+
+        // Verify invalid result is cached
+        String cacheKey = "validation:usernamesxy:en:V1";
+        Boolean hasKey = redisTemplate.hasKey(cacheKey).block();
+        assertThat(hasKey).as("Invalid validation result should be cached").isTrue();
+    }
+
+    @Test
+    @DisplayName("Should cache non-unique username detected via GraphQL")
+    void shouldCacheNonUniqueUsernameDetectedViaGraphQL() {
+        // Given - insert existing username
+        String existingUsername = "existing_gql_user";
+        databaseClient.sql("INSERT INTO generated_usernames (username, language, created_at) VALUES (:username, :language, NOW())")
+                .bind("username", existingUsername)
+                .bind("language", "EN")
+                .fetch()
+                .rowsUpdated()
+                .block();
+
+        String query = String.format("""
+            {
+              "query": "query { validateUsername(username: \\"%s\\", language: EN) { username isValid isUnique reasons } }"
+            }
+            """, existingUsername);
+
+        // First validation - cache miss
+        webTestClient.post()
+                .uri("/graphql")
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(query)
+                .exchange()
+                .expectStatus().isOk()
+                .expectBody()
+                .jsonPath("$.data.validateUsername.username").isEqualTo(existingUsername)
+                .jsonPath("$.data.validateUsername.isValid").isEqualTo(false)
+                .jsonPath("$.data.validateUsername.isUnique").isEqualTo(false);
+
+        // Second validation - cache hit
+        webTestClient.post()
+                .uri("/graphql")
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(query)
+                .exchange()
+                .expectStatus().isOk()
+                .expectBody()
+                .jsonPath("$.data.validateUsername.username").isEqualTo(existingUsername)
+                .jsonPath("$.data.validateUsername.isUnique").isEqualTo(false);
+
+        // Verify cached
+        String cacheKey = "validation:usernames" + existingUsername.toLowerCase() + ":en:V1";
+        Boolean hasKey = redisTemplate.hasKey(cacheKey).block();
+        assertThat(hasKey).as("Non-unique validation result should be cached").isTrue();
+    }
+
+    @Test
+    @DisplayName("REST and GraphQL should share validation cache")
+    void restAndGraphQLShouldShareValidationCache() {
+        // Given
+        String username = "shared_cache_user";
+        String graphQLQuery = String.format("""
+            {
+              "query": "query { validateUsername(username: \\"%s\\", language: EN) { username isValid } }"
+            }
+            """, username);
+
+        // First validate via REST endpoint
+        webTestClient.get()
+                .uri("/api/v1/usernames/validate/{username}?language=EN", username)
+                .accept(MediaType.APPLICATION_JSON)
+                .exchange()
+                .expectStatus().isOk()
+                .expectBody()
+                .jsonPath("$.username").isEqualTo(username)
+                .jsonPath("$.isValid").isBoolean();
+
+        // Second validate via GraphQL - should hit the same cache
+        webTestClient.post()
+                .uri("/graphql")
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(graphQLQuery)
+                .exchange()
+                .expectStatus().isOk()
+                .expectBody()
+                .jsonPath("$.data.validateUsername.username").isEqualTo(username)
+                .jsonPath("$.data.validateUsername.isValid").isBoolean();
+
+        // Verify only one cache entry exists (shared between REST and GraphQL)
+        String cacheKey = "validation:usernames" + username.toLowerCase() + ":en:V1";
+        Boolean hasKey = redisTemplate.hasKey(cacheKey).block();
+        assertThat(hasKey).as("REST and GraphQL should share the same cache").isTrue();
+    }
 }

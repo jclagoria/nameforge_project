@@ -3,6 +3,7 @@ package com.forge.domain.usecases;
 import com.forge.domain.model.Language;
 import com.forge.domain.model.ValidationRequest;
 import com.forge.domain.model.ValidationResult;
+import com.forge.domain.ports.outboung.CacheService;
 import com.forge.domain.ports.outboung.ModerationService;
 import com.forge.domain.ports.outboung.UsernameRepository;
 import org.junit.jupiter.api.BeforeEach;
@@ -30,11 +31,20 @@ class UsernameValidationUseCaseImplTest {
     @Mock
     private ModerationService moderationService;
 
+    @Mock
+    private CacheService cacheService;
+
     private UsernameValidationUseCaseImpl useCase;
 
     @BeforeEach
     void setUp() {
-        useCase = new UsernameValidationUseCaseImpl(usernameRepository, moderationService);
+        useCase = new UsernameValidationUseCaseImpl(usernameRepository, moderationService, cacheService);
+
+        // Default cache behavior: return empty (cache miss) to allow existing tests to work
+        when(cacheService.getCachedValidation(anyString(), any(Language.class)))
+                .thenReturn(Mono.empty());
+        when(cacheService.cacheValidation(anyString(), any(Language.class), any(ValidationResult.class)))
+                .thenReturn(Mono.empty());
     }
 
     @Nested
@@ -66,6 +76,8 @@ class UsernameValidationUseCaseImplTest {
 
             verify(usernameRepository).existsByUsername("validuser");
             verify(moderationService).isAppropriate("validuser");
+            verify(cacheService).getCachedValidation("validuser", Language.EN);
+            verify(cacheService).cacheValidation(eq("validuser"), eq(Language.EN), any(ValidationResult.class));
         }
 
         @Test
@@ -224,6 +236,7 @@ class UsernameValidationUseCaseImplTest {
             // Verify that repository and moderation service are never called
             verifyNoInteractions(usernameRepository);
             verifyNoInteractions(moderationService);
+            // Note: Cache interactions for invalid format are tested in Cache Integration Tests
         }
     }
 
@@ -751,6 +764,245 @@ class UsernameValidationUseCaseImplTest {
 
             verifyNoInteractions(usernameRepository);
             verifyNoInteractions(moderationService);
+        }
+    }
+
+    @Nested
+    @DisplayName("Cache Integration Tests")
+    class CacheIntegrationTests {
+
+        @Test
+        @DisplayName("Should return cached validation result without calling repository or moderation")
+        void shouldReturnCachedValidationResultWithoutCallingRepositoryOrModeration() {
+            // Given - cache hit with valid cached result
+            ValidationRequest request = ValidationRequest.of("cacheduser", Language.EN);
+            ValidationResult cachedResult = ValidationResult.valid("cacheduser", java.time.Instant.now());
+
+            // Override default cache behavior for this test
+            reset(cacheService);
+            when(cacheService.getCachedValidation("cacheduser", Language.EN))
+                    .thenReturn(Mono.just(cachedResult));
+
+            // When
+            Mono<ValidationResult> result = useCase.validate(request);
+
+            // Then
+            StepVerifier.create(result)
+                    .assertNext(validationResult -> {
+                        assertTrue(validationResult.isValid());
+                        assertEquals("cacheduser", validationResult.username());
+                    })
+                    .verifyComplete();
+
+            // Verify cache was checked but repository and moderation were NOT called
+            verify(cacheService).getCachedValidation("cacheduser", Language.EN);
+            verifyNoInteractions(usernameRepository);
+            verifyNoInteractions(moderationService);
+            verify(cacheService, never()).cacheValidation(anyString(), any(Language.class), any(ValidationResult.class));
+        }
+
+        @Test
+        @DisplayName("Should perform full validation when cache returns empty")
+        void shouldPerformFullValidationWhenCacheReturnsEmpty() {
+            // Given - cache miss (returns empty)
+            ValidationRequest request = ValidationRequest.of("newuser", Language.EN);
+
+            when(cacheService.getCachedValidation("newuser", Language.EN))
+                    .thenReturn(Mono.empty());
+            when(usernameRepository.existsByUsername("newuser"))
+                    .thenReturn(Mono.just(false));
+            when(moderationService.isAppropriate("newuser"))
+                    .thenReturn(Mono.just(true));
+
+            // When
+            Mono<ValidationResult> result = useCase.validate(request);
+
+            // Then
+            StepVerifier.create(result)
+                    .assertNext(validationResult -> {
+                        assertTrue(validationResult.isValid());
+                        assertEquals("newuser", validationResult.username());
+                    })
+                    .verifyComplete();
+
+            // Verify full validation was performed
+            verify(cacheService).getCachedValidation("newuser", Language.EN);
+            verify(usernameRepository).existsByUsername("newuser");
+            verify(moderationService).isAppropriate("newuser");
+            verify(cacheService).cacheValidation(eq("newuser"), eq(Language.EN), any(ValidationResult.class));
+        }
+
+        @Test
+        @DisplayName("Should cache validation result after successful validation")
+        void shouldCacheValidationResultAfterSuccessfulValidation() {
+            // Given
+            ValidationRequest request = ValidationRequest.of("testuser", Language.EN);
+
+            when(cacheService.getCachedValidation("testuser", Language.EN))
+                    .thenReturn(Mono.empty());
+            when(usernameRepository.existsByUsername("testuser"))
+                    .thenReturn(Mono.just(false));
+            when(moderationService.isAppropriate("testuser"))
+                    .thenReturn(Mono.just(true));
+
+            // When
+            Mono<ValidationResult> result = useCase.validate(request);
+
+            // Then
+            StepVerifier.create(result)
+                    .assertNext(validationResult -> assertTrue(validationResult.isValid()))
+                    .verifyComplete();
+
+            // Verify caching was called with correct parameters
+            verify(cacheService).cacheValidation(
+                    eq("testuser"),
+                    eq(Language.EN),
+                    argThat(vr -> vr.isValid() && vr.username().equals("testuser"))
+            );
+        }
+
+        @Test
+        @DisplayName("Should propagate error when getCachedValidation fails")
+        void shouldPropagateErrorWhenGetCachedValidationFails() {
+            // Given - cache read error
+            ValidationRequest request = ValidationRequest.of("testuser", Language.EN);
+
+            reset(cacheService);
+            when(cacheService.getCachedValidation("testuser", Language.EN))
+                    .thenReturn(Mono.error(new RuntimeException("Cache read error")));
+
+            // When
+            Mono<ValidationResult> result = useCase.validate(request);
+
+            // Then - error should propagate (implementation doesn't handle cache read errors)
+            StepVerifier.create(result)
+                    .expectErrorMatches(throwable ->
+                        throwable instanceof RuntimeException &&
+                        throwable.getMessage().equals("Cache read error"))
+                    .verify();
+
+            // Verify cache was checked but validation didn't proceed
+            verify(cacheService).getCachedValidation("testuser", Language.EN);
+            verifyNoInteractions(usernameRepository);
+            verifyNoInteractions(moderationService);
+        }
+
+        @Test
+        @DisplayName("Should complete validation when cacheValidation fails")
+        void shouldCompleteValidationWhenCacheValidationFails() {
+            // Given - cache write error
+            ValidationRequest request = ValidationRequest.of("testuser", Language.EN);
+
+            reset(cacheService);
+            when(cacheService.getCachedValidation("testuser", Language.EN))
+                    .thenReturn(Mono.empty());
+            when(cacheService.cacheValidation(anyString(), any(Language.class), any(ValidationResult.class)))
+                    .thenReturn(Mono.error(new RuntimeException("Cache write error")));
+            when(usernameRepository.existsByUsername("testuser"))
+                    .thenReturn(Mono.just(false));
+            when(moderationService.isAppropriate("testuser"))
+                    .thenReturn(Mono.just(true));
+
+            // When
+            Mono<ValidationResult> result = useCase.validate(request);
+
+            // Then - validation should still complete successfully
+            StepVerifier.create(result)
+                    .assertNext(validationResult -> {
+                        assertTrue(validationResult.isValid());
+                        assertEquals("testuser", validationResult.username());
+                    })
+                    .verifyComplete();
+
+            // Verify caching was attempted
+            verify(cacheService).cacheValidation(eq("testuser"), eq(Language.EN), any(ValidationResult.class));
+        }
+
+        @Test
+        @DisplayName("Should cache invalid format results")
+        void shouldCacheInvalidFormatResults() {
+            // Given - invalid format (too short) but still goes through cache flow
+            ValidationRequest request = ValidationRequest.of("abc", Language.EN);
+
+            // When
+            Mono<ValidationResult> result = useCase.validate(request);
+
+            // Then
+            StepVerifier.create(result)
+                    .assertNext(validationResult -> {
+                        assertFalse(validationResult.isValid());
+                        assertFalse(validationResult.isValidFormat());
+                    })
+                    .verifyComplete();
+
+            // Verify cache check happened and result was cached even for invalid format
+            verify(cacheService).getCachedValidation("abc", Language.EN);
+            verify(cacheService).cacheValidation(eq("abc"), eq(Language.EN), any(ValidationResult.class));
+        }
+
+        @Test
+        @DisplayName("Should cache invalid validation results with valid format")
+        void shouldCacheInvalidValidationResultsWithValidFormat() {
+            // Given - valid format but username exists
+            ValidationRequest request = ValidationRequest.of("existinguser", Language.EN);
+
+            when(cacheService.getCachedValidation("existinguser", Language.EN))
+                    .thenReturn(Mono.empty());
+            when(usernameRepository.existsByUsername("existinguser"))
+                    .thenReturn(Mono.just(true));
+            when(moderationService.isAppropriate("existinguser"))
+                    .thenReturn(Mono.just(true));
+
+            // When
+            Mono<ValidationResult> result = useCase.validate(request);
+
+            // Then
+            StepVerifier.create(result)
+                    .assertNext(validationResult -> {
+                        assertFalse(validationResult.isValid());
+                        assertFalse(validationResult.isUnique());
+                        assertTrue(validationResult.isValidFormat());
+                    })
+                    .verifyComplete();
+
+            // Verify invalid result was cached
+            verify(cacheService).cacheValidation(
+                    eq("existinguser"),
+                    eq(Language.EN),
+                    argThat(vr -> !vr.isValid() && !vr.isUnique())
+            );
+        }
+
+        @Test
+        @DisplayName("Should respect language in cache key")
+        void shouldRespectLanguageInCacheKey() {
+            // Given - same username, different languages
+            ValidationRequest requestEN = ValidationRequest.of("testuser", Language.EN);
+            ValidationRequest requestES = ValidationRequest.of("testuser", Language.ES);
+
+            when(cacheService.getCachedValidation("testuser", Language.EN))
+                    .thenReturn(Mono.empty());
+            when(cacheService.getCachedValidation("testuser", Language.ES))
+                    .thenReturn(Mono.empty());
+            when(usernameRepository.existsByUsername("testuser"))
+                    .thenReturn(Mono.just(false));
+            when(moderationService.isAppropriate("testuser"))
+                    .thenReturn(Mono.just(true));
+
+            // When - validate for both languages
+            StepVerifier.create(useCase.validate(requestEN))
+                    .assertNext(vr -> assertTrue(vr.isValid()))
+                    .verifyComplete();
+
+            StepVerifier.create(useCase.validate(requestES))
+                    .assertNext(vr -> assertTrue(vr.isValid()))
+                    .verifyComplete();
+
+            // Then - verify cache was checked and written with correct language keys
+            verify(cacheService).getCachedValidation("testuser", Language.EN);
+            verify(cacheService).getCachedValidation("testuser", Language.ES);
+            verify(cacheService).cacheValidation(eq("testuser"), eq(Language.EN), any(ValidationResult.class));
+            verify(cacheService).cacheValidation(eq("testuser"), eq(Language.ES), any(ValidationResult.class));
         }
     }
 }
