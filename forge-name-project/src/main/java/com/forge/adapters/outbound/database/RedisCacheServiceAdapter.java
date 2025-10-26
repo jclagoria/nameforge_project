@@ -5,26 +5,33 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.forge.domain.model.Language;
 import com.forge.domain.model.PatternType;
 import com.forge.domain.model.Username;
+import com.forge.domain.model.ValidationResult;
 import com.forge.domain.ports.outboung.CacheService;
 import lombok.RequiredArgsConstructor;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.redis.core.ReactiveRedisTemplate;
-import org.springframework.stereotype.Service;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
 import java.time.Duration;
+import java.time.Instant;
+import java.util.List;
 
-@Service
+/**
+ * Redis-backed implementation of CacheService using ReactiveRedisTemplate.
+ * Configured as a bean in CacheConfig when Redis is available.
+ */
+@Slf4j
 @RequiredArgsConstructor
-@ConditionalOnBean(ReactiveRedisTemplate.class)
-@ConditionalOnProperty(prefix = "spring.data.redis.repositories", name = "enabled", matchIfMissing = true)
 public class RedisCacheServiceAdapter implements CacheService {
 
     private static final String USERNAME_CACHE_PREFIX = "username:";
     private static final String BLOOM_FILER_PREFIX = "bloom:usernames";
+    private static final String VALIDATION_CACHE_PREFIX = "validation:usernames";
+    private static final String CACHE_VERSION = "V1";
+
     private static final Duration CACHE_TTL =  Duration.ofMinutes(30);
+    private static final Duration VALIDATION_CACHE_TTL =  Duration.ofMinutes(60);
 
     private final ReactiveRedisTemplate<String, String> redisTemplate;
     private final ObjectMapper objectMapper;
@@ -94,6 +101,76 @@ public class RedisCacheServiceAdapter implements CacheService {
                 .onErrorReturn(false); // Gracefully handle Redis failures - assume not exists
     }
 
+    @Override
+    public Mono<ValidationResult> getCachedValidation(String username, Language language) {
+        log.info("entro en RedisCacheServiceAdapter.getCachedValidation");
+
+        String key = buildValidationCacheKey(username, language);
+
+        return Mono.defer(() -> redisTemplate.opsForValue()
+                .get(key)
+                .flatMap(this::deserializeValidationResult)
+                .doOnNext(result ->  log.debug(
+                        "Cache HIT for validation: username={}, language={}",
+                        username, language
+                ))
+                .doOnError(error -> log.warn(
+                        "Error retrieving cached validation: {}",
+                        error.getMessage()
+                )))
+                .onErrorResume(error -> {
+                    log.warn("Cache retrieval failed, will perform full validation: {}",
+                            error.getMessage());
+                    return Mono.empty();
+                });
+    }
+
+    @Override
+    public Mono<Void> cacheValidation(String username, Language language, ValidationResult result) {
+        log.info("entro en RedisCacheServiceAdapter.cacheValidation");
+        String key = buildValidationCacheKey(username, language);
+
+        return Mono.defer(() -> serializeValidationResult(result)
+                .flatMap(serialized -> redisTemplate.opsForValue()
+                        .set(key, serialized, VALIDATION_CACHE_TTL)
+                        .doOnSuccess(success -> log.debug(
+                                "Cached validation result: username={}, language={}, isValid={}",
+                                username, language, result.isValid()
+                        ))
+                        .then())
+                .doOnError(error -> log.warn(
+                        "Failed to cache validation result: {}",
+                        error.getMessage()
+                )))
+                .onErrorResume(error -> {
+                    // Gracefully handle cache failures - don't fail the validation
+                    log.warn("Validation caching failed (continuing): {}", error.getMessage());
+                    return Mono.empty();
+                });
+    }
+
+    @Override
+    public Mono<Void> invalidateValidation(String username) {
+        log.info("entro en RedisCacheServiceAdapter.invalidateValidation");
+
+        return Flux.fromArray(Language.values())
+                .flatMap(language -> {
+                    String key = buildValidationCacheKey(username, language);
+                    return redisTemplate.delete(key)
+                            .doOnSuccess(deleted -> {
+                                if (deleted > 0) {
+                                    log.debug("Invalidated validation cache for: username={}, language={}",
+                                            username, language);
+                                }
+                            });
+                })
+                .then()
+                .onErrorResume(error -> {
+                    log.warn("Failed to invalidate validation cache: {}", error.getMessage());
+                    return Mono.empty();
+                });
+    }
+
     private Mono<String> serializeUsername(Username username) {
         try {
             CachedUsernameDto dto = new CachedUsernameDto(
@@ -123,5 +200,65 @@ public class RedisCacheServiceAdapter implements CacheService {
         }
     }
 
+    private String buildValidationCacheKey(String username, Language language) {
+        return String.format("%s%s:%s:%s",
+                VALIDATION_CACHE_PREFIX,
+                username.toLowerCase(),
+                language.name().toLowerCase(),
+                CACHE_VERSION
+        );
+    }
+
+    private Mono<String> serializeValidationResult(ValidationResult result) {
+        try {
+            CachedValidationDto dto = new CachedValidationDto(
+                    result.username(),
+                    result.isValid(),
+                    result.isUnique(),
+                    result.isAppropriate(),
+                    result.isValidFormat(),
+                    result.reasons(),
+                    result.confidenceScore(),
+                    result.validatedAt().toString()
+            );
+
+            return Mono.just(objectMapper.writeValueAsString(dto));
+        } catch (JsonProcessingException ex) {
+            return Mono.error(new RuntimeException(
+                    "Failed to serialize validation result", ex));
+        }
+    }
+
+    private Mono<ValidationResult> deserializeValidationResult(String json) {
+        try {
+            CachedValidationDto dto = objectMapper.readValue(json, CachedValidationDto.class);
+
+            return Mono.just(new ValidationResult(
+                    dto.username(),
+                    dto.isValid,
+                    dto.isUnique,
+                    dto.isAppropriate,
+                    dto.isValidFormat,
+                    dto.reasons(),
+                    dto.confidenceScore(),
+                    Instant.parse(dto.validatedAt())
+            ));
+        } catch (Exception ex) {
+            return Mono.error(new RuntimeException(
+                    "Failed to deserialize validation result", ex));
+        }
+    }
+
     private record CachedUsernameDto(String value, String language, String patternType) {}
+
+    private record CachedValidationDto(
+            String username,
+            boolean isValid,
+            boolean isUnique,
+            boolean isAppropriate,
+            boolean isValidFormat,
+            List<String> reasons,
+            double confidenceScore,
+            String validatedAt
+    ) {}
 }
