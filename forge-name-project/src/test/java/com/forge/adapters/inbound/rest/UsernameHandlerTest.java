@@ -5,6 +5,7 @@ import com.forge.adapters.inbound.dto.UsernameResponseDto;
 import com.forge.adapters.inbound.dto.ValidationResponseDto;
 import com.forge.adapters.inbound.mapper.GenerationRequestMapper;
 import com.forge.adapters.inbound.mapper.GenerationResponseMapper;
+import com.forge.adapters.inbound.mapper.MarkUsedResponseMapper;
 import com.forge.adapters.inbound.mapper.ValidationResponseMapper;
 import com.forge.domain.model.GenerationRequest;
 import com.forge.domain.model.GenerationResponse;
@@ -13,6 +14,7 @@ import com.forge.domain.model.Username;
 import com.forge.domain.model.ValidationRequest;
 import com.forge.domain.model.ValidationResult;
 import com.forge.domain.ports.inbound.UsernameGenerationUseCase;
+import com.forge.domain.ports.inbound.UsernameMarkUsedUseCase;
 import com.forge.domain.ports.inbound.UsernameValidationUseCase;
 import jakarta.validation.ConstraintViolation;
 import jakarta.validation.Path;
@@ -32,6 +34,7 @@ import reactor.core.publisher.Mono;
 import reactor.test.StepVerifier;
 
 import java.time.Instant;
+import java.time.LocalDateTime;
 import java.util.*;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -50,6 +53,9 @@ class UsernameHandlerTest {
     private UsernameValidationUseCase usernameValidationUseCase;
 
     @Mock
+    private UsernameMarkUsedUseCase usernameMarkUsedUseCase;
+
+    @Mock
     private GenerationRequestMapper requestMapper;
 
     @Mock
@@ -57,6 +63,9 @@ class UsernameHandlerTest {
 
     @Mock
     private ValidationResponseMapper validationResponseMapper;
+
+    @Mock
+    private MarkUsedResponseMapper markUsedResponseMapper;
 
     @Mock
     private Validator validator;
@@ -77,8 +86,10 @@ class UsernameHandlerTest {
         handler = new UsernameHandler(
                 usernameGenerationUseCase,
                 usernameValidationUseCase,
+                usernameMarkUsedUseCase,
                 requestMapper,
                 responseMapper,
+                markUsedResponseMapper,
                 validationResponseMapper,
                 validator
         );
@@ -798,6 +809,280 @@ class UsernameHandlerTest {
                         assertEquals(HttpStatus.BAD_REQUEST, response.statusCode());
                     })
                     .verifyComplete();
+        }
+    }
+
+    @Nested
+    @DisplayName("Mark Used Endpoint Tests")
+    class MarkUsedEndpointTests {
+
+        @Test
+        @DisplayName("Should mark username as used successfully when username is available")
+        void shouldMarkUsernameAsUsedSuccessfully() {
+            // Given
+            String username = "availableuser";
+            com.forge.domain.model.MarkUsedResult domainResult =
+                    com.forge.domain.model.MarkUsedResult.marked(username, LocalDateTime.now());
+            com.forge.adapters.inbound.dto.MarkUsedResponseDto expectedDto =
+                    new com.forge.adapters.inbound.dto.MarkUsedResponseDto(
+                            username,
+                            true,
+                            false,
+                            Instant.now(),
+                            "Username successfully marked as used"
+                    );
+
+            when(serverRequest.pathVariable("username")).thenReturn(username);
+            when(usernameMarkUsedUseCase.markAsUsed(username))
+                    .thenReturn(Mono.just(domainResult));
+            when(markUsedResponseMapper.toDto(domainResult)).thenReturn(expectedDto);
+
+            // When
+            Mono<ServerResponse> result = handler.markUsed(serverRequest);
+
+            // Then
+            StepVerifier.create(result)
+                    .assertNext(response -> {
+                        assertEquals(HttpStatus.OK, response.statusCode());
+                        assertEquals(MediaType.APPLICATION_JSON, response.headers().getContentType());
+                    })
+                    .verifyComplete();
+
+            verify(usernameMarkUsedUseCase).markAsUsed(username);
+            verify(markUsedResponseMapper).toDto(domainResult);
+        }
+
+        @Test
+        @DisplayName("Should return OK when username is already marked (idempotent behavior)")
+        void shouldReturnOkWhenUsernameAlreadyMarked() {
+            // Given
+            String username = "alreadyused";
+            com.forge.domain.model.MarkUsedResult domainResult =
+                    com.forge.domain.model.MarkUsedResult.alreadyUsed(username);
+            com.forge.adapters.inbound.dto.MarkUsedResponseDto expectedDto =
+                    new com.forge.adapters.inbound.dto.MarkUsedResponseDto(
+                            username,
+                            false,
+                            true,
+                            null,
+                            "Username was already marked as used"
+                    );
+
+            when(serverRequest.pathVariable("username")).thenReturn(username);
+            when(usernameMarkUsedUseCase.markAsUsed(username))
+                    .thenReturn(Mono.just(domainResult));
+            when(markUsedResponseMapper.toDto(domainResult)).thenReturn(expectedDto);
+
+            // When
+            Mono<ServerResponse> result = handler.markUsed(serverRequest);
+
+            // Then
+            StepVerifier.create(result)
+                    .assertNext(response -> {
+                        assertEquals(HttpStatus.OK, response.statusCode());
+                        assertEquals(MediaType.APPLICATION_JSON, response.headers().getContentType());
+                    })
+                    .verifyComplete();
+
+            verify(usernameMarkUsedUseCase).markAsUsed(username);
+            verify(markUsedResponseMapper).toDto(domainResult);
+        }
+
+        @Test
+        @DisplayName("Should return bad request when use case throws IllegalArgumentException")
+        void shouldReturnBadRequestWhenUseCaseThrowsIllegalArgumentException() {
+            // Given
+            String username = "invalid username";
+            when(serverRequest.pathVariable("username")).thenReturn(username);
+            when(usernameMarkUsedUseCase.markAsUsed(username))
+                    .thenReturn(Mono.error(new IllegalArgumentException("Invalid username format")));
+
+            // When
+            Mono<ServerResponse> result = handler.markUsed(serverRequest);
+
+            // Then
+            StepVerifier.create(result)
+                    .assertNext(response -> {
+                        assertEquals(HttpStatus.BAD_REQUEST, response.statusCode());
+                    })
+                    .verifyComplete();
+
+            verify(usernameMarkUsedUseCase).markAsUsed(username);
+            verifyNoInteractions(markUsedResponseMapper);
+        }
+
+        @Test
+        @DisplayName("Should return internal server error when use case throws generic exception")
+        void shouldReturnInternalServerErrorWhenUseCaseThrowsGenericException() {
+            // Given
+            String username = "testuser";
+            when(serverRequest.pathVariable("username")).thenReturn(username);
+            when(usernameMarkUsedUseCase.markAsUsed(username))
+                    .thenReturn(Mono.error(new RuntimeException("Database connection failed")));
+
+            // When
+            Mono<ServerResponse> result = handler.markUsed(serverRequest);
+
+            // Then
+            StepVerifier.create(result)
+                    .assertNext(response -> {
+                        assertEquals(HttpStatus.INTERNAL_SERVER_ERROR, response.statusCode());
+                    })
+                    .verifyComplete();
+
+            verify(usernameMarkUsedUseCase).markAsUsed(username);
+            verifyNoInteractions(markUsedResponseMapper);
+        }
+
+        @Test
+        @DisplayName("Should extract username from path variable correctly")
+        void shouldExtractUsernameFromPathVariableCorrectly() {
+            // Given
+            String username = "path_variable_test";
+            com.forge.domain.model.MarkUsedResult domainResult =
+                    com.forge.domain.model.MarkUsedResult.marked(username, LocalDateTime.now());
+            com.forge.adapters.inbound.dto.MarkUsedResponseDto expectedDto =
+                    new com.forge.adapters.inbound.dto.MarkUsedResponseDto(
+                            username,
+                            true,
+                            false,
+                            Instant.now(),
+                            "Username successfully marked as used"
+                    );
+
+            when(serverRequest.pathVariable("username")).thenReturn(username);
+            when(usernameMarkUsedUseCase.markAsUsed(username))
+                    .thenReturn(Mono.just(domainResult));
+            when(markUsedResponseMapper.toDto(domainResult)).thenReturn(expectedDto);
+
+            // When
+            Mono<ServerResponse> result = handler.markUsed(serverRequest);
+
+            // Then
+            StepVerifier.create(result)
+                    .assertNext(response -> {
+                        assertEquals(HttpStatus.OK, response.statusCode());
+                    })
+                    .verifyComplete();
+
+            verify(serverRequest).pathVariable("username");
+            verify(usernameMarkUsedUseCase).markAsUsed(username);
+        }
+
+        @Test
+        @DisplayName("Should handle username with special characters")
+        void shouldHandleUsernameWithSpecialCharacters() {
+            // Given
+            String username = "user_name-123";
+            com.forge.domain.model.MarkUsedResult domainResult =
+                    com.forge.domain.model.MarkUsedResult.marked(username, LocalDateTime.now());
+            com.forge.adapters.inbound.dto.MarkUsedResponseDto expectedDto =
+                    new com.forge.adapters.inbound.dto.MarkUsedResponseDto(
+                            username,
+                            true,
+                            false,
+                            Instant.now(),
+                            "Username successfully marked as used"
+                    );
+
+            when(serverRequest.pathVariable("username")).thenReturn(username);
+            when(usernameMarkUsedUseCase.markAsUsed(username))
+                    .thenReturn(Mono.just(domainResult));
+            when(markUsedResponseMapper.toDto(domainResult)).thenReturn(expectedDto);
+
+            // When
+            Mono<ServerResponse> result = handler.markUsed(serverRequest);
+
+            // Then
+            StepVerifier.create(result)
+                    .assertNext(response -> {
+                        assertEquals(HttpStatus.OK, response.statusCode());
+                    })
+                    .verifyComplete();
+        }
+
+        @Test
+        @DisplayName("Should complete reactive flow without blocking")
+        void shouldCompleteReactiveFlowWithoutBlocking() {
+            // Given
+            String username = "reactivetest";
+            com.forge.domain.model.MarkUsedResult domainResult =
+                    com.forge.domain.model.MarkUsedResult.marked(username, LocalDateTime.now());
+            com.forge.adapters.inbound.dto.MarkUsedResponseDto expectedDto =
+                    new com.forge.adapters.inbound.dto.MarkUsedResponseDto(
+                            username,
+                            true,
+                            false,
+                            Instant.now(),
+                            "Username successfully marked as used"
+                    );
+
+            when(serverRequest.pathVariable("username")).thenReturn(username);
+            when(usernameMarkUsedUseCase.markAsUsed(username))
+                    .thenReturn(Mono.just(domainResult));
+            when(markUsedResponseMapper.toDto(domainResult)).thenReturn(expectedDto);
+
+            // When
+            Mono<ServerResponse> result = handler.markUsed(serverRequest);
+
+            // Then - verify the Mono completes without blocking
+            StepVerifier.create(result)
+                    .expectNextCount(1)
+                    .verifyComplete();
+        }
+
+        @Test
+        @DisplayName("Should handle empty username from path variable")
+        void shouldHandleEmptyUsernameFromPathVariable() {
+            // Given
+            String username = "";
+            when(serverRequest.pathVariable("username")).thenReturn(username);
+            when(usernameMarkUsedUseCase.markAsUsed(username))
+                    .thenReturn(Mono.error(new IllegalArgumentException("Username cannot be empty")));
+
+            // When
+            Mono<ServerResponse> result = handler.markUsed(serverRequest);
+
+            // Then
+            StepVerifier.create(result)
+                    .assertNext(response -> {
+                        assertEquals(HttpStatus.BAD_REQUEST, response.statusCode());
+                    })
+                    .verifyComplete();
+        }
+
+        @Test
+        @DisplayName("Should propagate mapper transformation correctly")
+        void shouldPropagateMapperTransformationCorrectly() {
+            // Given
+            String username = "mappertest";
+            com.forge.domain.model.MarkUsedResult domainResult =
+                    com.forge.domain.model.MarkUsedResult.marked(username, LocalDateTime.now());
+            com.forge.adapters.inbound.dto.MarkUsedResponseDto expectedDto =
+                    new com.forge.adapters.inbound.dto.MarkUsedResponseDto(
+                            username,
+                            true,
+                            false,
+                            Instant.now(),
+                            "Custom message"
+                    );
+
+            when(serverRequest.pathVariable("username")).thenReturn(username);
+            when(usernameMarkUsedUseCase.markAsUsed(username))
+                    .thenReturn(Mono.just(domainResult));
+            when(markUsedResponseMapper.toDto(domainResult)).thenReturn(expectedDto);
+
+            // When
+            Mono<ServerResponse> result = handler.markUsed(serverRequest);
+
+            // Then
+            StepVerifier.create(result)
+                    .assertNext(response -> {
+                        assertEquals(HttpStatus.OK, response.statusCode());
+                    })
+                    .verifyComplete();
+
+            verify(markUsedResponseMapper).toDto(domainResult);
         }
     }
 

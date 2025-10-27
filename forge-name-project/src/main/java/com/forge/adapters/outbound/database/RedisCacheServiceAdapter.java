@@ -15,6 +15,7 @@ import reactor.core.publisher.Mono;
 
 import java.time.Duration;
 import java.time.Instant;
+import java.util.Arrays;
 import java.util.List;
 
 /**
@@ -151,22 +152,40 @@ public class RedisCacheServiceAdapter implements CacheService {
 
     @Override
     public Mono<Void> invalidateValidation(String username) {
-        log.info("entro en RedisCacheServiceAdapter.invalidateValidation");
+        log.debug("Invalidating validation cache for username: {}", username);
 
-        return Flux.fromArray(Language.values())
-                .flatMap(language -> {
+        // Create deletion operations for all language-specific validation caches
+        List<Mono<Long>> validationDeletions = Arrays.stream(Language.values())
+                .map(language -> {
                     String key = buildValidationCacheKey(username, language);
-                    return redisTemplate.delete(key)
-                            .doOnSuccess(deleted -> {
-                                if (deleted > 0) {
-                                    log.debug("Invalidated validation cache for: username={}, language={}",
-                                            username, language);
-                                }
-                            });
+                    return redisTemplate.delete(key);
                 })
+                .toList();
+
+        // Create Bloom filter removal operation
+        Mono<Long> bloomFilterRemoval = redisTemplate.opsForSet()
+                .remove(BLOOM_FILER_PREFIX, username)
+                .doOnSuccess(removed -> {
+                    if (removed != null && removed > 0) {
+                        log.debug("Removed username '{}' from Bloom filter", username);
+                    }
+                });
+
+        // Execute all deletions in parallel
+        return Mono.when(validationDeletions)
+                .then(bloomFilterRemoval)
                 .then()
+                .doOnSuccess(v -> log.debug(
+                        "Successfully invalidated validation cache and Bloom filter for username: {}",
+                        username
+                ))
+                .doOnError(error -> log.warn(
+                        "Failed to fully invalidate cache for username '{}': {}",
+                        username, error.getMessage()
+                ))
                 .onErrorResume(error -> {
-                    log.warn("Failed to invalidate validation cache: {}", error.getMessage());
+                    // Gracefully handle cache failures - don't fail the operation
+                    log.warn("Cache invalidation failed (continuing): {}", error.getMessage());
                     return Mono.empty();
                 });
     }

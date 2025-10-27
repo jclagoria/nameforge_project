@@ -7,6 +7,7 @@ import com.forge.domain.model.PatternType;
 import com.forge.domain.model.Username;
 import com.forge.domain.ports.outboung.UsernameRepository;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.r2dbc.core.R2dbcEntityTemplate;
 import org.springframework.r2dbc.core.DatabaseClient;
 import org.springframework.stereotype.Repository;
@@ -16,6 +17,7 @@ import reactor.core.publisher.Mono;
 import java.time.LocalDateTime;
 import java.util.Map;
 
+@Slf4j
 @Repository
 @RequiredArgsConstructor
 public class R2dbcUsernameRepositoryAdapter implements UsernameRepository {
@@ -66,6 +68,27 @@ public class R2dbcUsernameRepositoryAdapter implements UsernameRepository {
                 .all()
                 .map(this::mapRowToEntity)
                 .map(mapper::toDomain);
+    }
+
+    @Override
+    public Mono<Boolean> markAsUsed(String username) {
+        return databaseClient
+                .sql("""
+                    UPDATE generated_usernames
+                    SET is_used = TRUE, used_at = NOW()
+                    WHERE username = :username AND is_used = FALSE
+                """)
+                .bind("username", username)
+                .fetch()
+                .rowsUpdated()
+                .map(rowsUpdate -> rowsUpdate > 0)
+                .doOnNext(updated -> {
+                    if (updated) {
+                        log.info("Username marked as used in database: {}", username);
+                    } else {
+                        log.warn("Username not updated (not found or already used): {}", username);
+                    }
+                });
     }
 
     private UsernameEntity mapRowToEntity(Map<String, Object> row) {

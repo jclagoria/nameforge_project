@@ -319,4 +319,198 @@ class R2dbcUsernameRepositoryAdapterTest {
                 .verifyComplete();
     }
 
+    // ==================== markAsUsed() Tests ====================
+
+    @Test
+    @DisplayName("Should Mark Username As Used When Username Exists And Is Available")
+    void shouldMarkUsernameAsUsedWhenAvailable() {
+        // ARRANGE - Save an available username
+        String usernameValue = "availableuser123";
+        repository.save(Username.of(usernameValue, Language.EN)).block();
+
+        // Verify it's initially not used
+        Boolean initiallyUsed = databaseClient
+                .sql("SELECT is_used FROM generated_usernames WHERE username = :username")
+                .bind("username", usernameValue)
+                .map(row -> row.get("is_used", Boolean.class))
+                .one()
+                .block();
+        assertThat(initiallyUsed).isFalse();
+
+        // ACT - Mark as used
+        StepVerifier.create(repository.markAsUsed(usernameValue))
+                .expectNext(true)
+                .verifyComplete();
+
+        // ASSERT - Verify database state changed
+        Boolean nowUsed = databaseClient
+                .sql("SELECT is_used FROM generated_usernames WHERE username = :username")
+                .bind("username", usernameValue)
+                .map(row -> row.get("is_used", Boolean.class))
+                .one()
+                .block();
+        assertThat(nowUsed).isTrue();
+
+        // Verify used_at timestamp is set
+        Object usedAt = databaseClient
+                .sql("SELECT used_at FROM generated_usernames WHERE username = :username")
+                .bind("username", usernameValue)
+                .map(row -> row.get("used_at"))
+                .one()
+                .block();
+        assertThat(usedAt).isNotNull();
+    }
+
+    @Test
+    @DisplayName("Should Return False When Username Does Not Exist")
+    void shouldReturnFalseWhenMarkingNonExistentUsername() {
+        // ACT & ASSERT - Try to mark non-existent username
+        StepVerifier.create(repository.markAsUsed("nonexistentuser"))
+                .expectNext(false)
+                .verifyComplete();
+    }
+
+    @Test
+    @DisplayName("Should Return False When Username Is Already Marked As Used")
+    void shouldReturnFalseWhenUsernameAlreadyMarked() {
+        // ARRANGE - Save and mark a username as used
+        String usernameValue = "alreadyuseduser";
+        repository.save(Username.of(usernameValue, Language.EN)).block();
+        repository.markAsUsed(usernameValue).block();
+
+        // Verify it's marked as used
+        Boolean isUsed = databaseClient
+                .sql("SELECT is_used FROM generated_usernames WHERE username = :username")
+                .bind("username", usernameValue)
+                .map(row -> row.get("is_used", Boolean.class))
+                .one()
+                .block();
+        assertThat(isUsed).isTrue();
+
+        // ACT - Try to mark again
+        StepVerifier.create(repository.markAsUsed(usernameValue))
+                .expectNext(false)
+                .verifyComplete();
+    }
+
+    @Test
+    @DisplayName("Should Not Update Used_At Timestamp When Already Marked")
+    void shouldNotUpdateTimestampWhenAlreadyMarked() {
+        // ARRANGE - Save and mark username
+        String usernameValue = "timestamptest";
+        repository.save(Username.of(usernameValue, Language.EN)).block();
+        repository.markAsUsed(usernameValue).block();
+
+        // Get initial timestamp
+        Object initialTimestamp = databaseClient
+                .sql("SELECT used_at FROM generated_usernames WHERE username = :username")
+                .bind("username", usernameValue)
+                .map(row -> row.get("used_at"))
+                .one()
+                .block();
+        assertThat(initialTimestamp).isNotNull();
+
+        // ACT - Try to mark again
+        repository.markAsUsed(usernameValue).block();
+
+        // ASSERT - Timestamp should remain the same (update didn't happen)
+        Object finalTimestamp = databaseClient
+                .sql("SELECT used_at FROM generated_usernames WHERE username = :username")
+                .bind("username", usernameValue)
+                .map(row -> row.get("used_at"))
+                .one()
+                .block();
+        assertThat(finalTimestamp).isEqualTo(initialTimestamp);
+    }
+
+    @Test
+    @DisplayName("Should Mark Multiple Different Usernames Successfully")
+    void shouldMarkMultipleDifferentUsernamesSuccessfully() {
+        // ARRANGE - Save multiple usernames
+        repository.save(Username.of("user1", Language.EN)).block();
+        repository.save(Username.of("user2", Language.EN)).block();
+        repository.save(Username.of("user3", Language.EN)).block();
+
+        // ACT - Mark each as used
+        StepVerifier.create(repository.markAsUsed("user1"))
+                .expectNext(true)
+                .verifyComplete();
+
+        StepVerifier.create(repository.markAsUsed("user2"))
+                .expectNext(true)
+                .verifyComplete();
+
+        StepVerifier.create(repository.markAsUsed("user3"))
+                .expectNext(true)
+                .verifyComplete();
+
+        // ASSERT - All should be marked as used
+        Long usedCount = databaseClient
+                .sql("SELECT COUNT(*) FROM generated_usernames WHERE is_used = TRUE AND username IN ('user1', 'user2', 'user3')")
+                .map(row -> row.get(0, Long.class))
+                .one()
+                .block();
+        assertThat(usedCount).isEqualTo(3L);
+    }
+
+    @Test
+    @DisplayName("Should Not Mark Usernames From Different Languages When Marking One")
+    void shouldOnlyMarkSpecificUsername() {
+        // ARRANGE - Save usernames with similar patterns
+        repository.save(Username.of("testuser", Language.EN)).block();
+        repository.save(Username.of("testuser123", Language.EN)).block();
+
+        // ACT - Mark only one
+        StepVerifier.create(repository.markAsUsed("testuser"))
+                .expectNext(true)
+                .verifyComplete();
+
+        // ASSERT - Only "testuser" should be marked, not "testuser123"
+        Boolean testUserUsed = databaseClient
+                .sql("SELECT is_used FROM generated_usernames WHERE username = 'testuser'")
+                .map(row -> row.get("is_used", Boolean.class))
+                .one()
+                .block();
+        assertThat(testUserUsed).isTrue();
+
+        Boolean testUser123Used = databaseClient
+                .sql("SELECT is_used FROM generated_usernames WHERE username = 'testuser123'")
+                .map(row -> row.get("is_used", Boolean.class))
+                .one()
+                .block();
+        assertThat(testUser123Used).isFalse();
+    }
+
+    @Test
+    @DisplayName("Should Exclude Marked Usernames From Available Results")
+    void shouldExcludeMarkedUsernamesFromAvailableResults() {
+        // ARRANGE - Save multiple usernames
+        repository.save(Username.of("available1", Language.EN)).block();
+        repository.save(Username.of("available2", Language.EN)).block();
+        repository.save(Username.of("tobemarked", Language.EN)).block();
+
+        // Mark one as used
+        repository.markAsUsed("tobemarked").block();
+
+        // ACT & ASSERT - Should only find the available ones
+        StepVerifier.create(repository.findAvailableByLanguage(Language.EN, 10))
+                .expectNextCount(2)
+                .verifyComplete();
+
+        // Verify the marked one is not in results
+        StepVerifier.create(repository.findAvailableByLanguage(Language.EN, 10))
+                .assertNext(u -> assertThat(u.value()).isNotEqualTo("tobemarked"))
+                .assertNext(u -> assertThat(u.value()).isNotEqualTo("tobemarked"))
+                .verifyComplete();
+    }
+
+    @Test
+    @DisplayName("Should Handle Empty String Username")
+    void shouldHandleEmptyStringUsername() {
+        // ACT & ASSERT - Empty string should return false (not found)
+        StepVerifier.create(repository.markAsUsed(""))
+                .expectNext(false)
+                .verifyComplete();
+    }
+
 }

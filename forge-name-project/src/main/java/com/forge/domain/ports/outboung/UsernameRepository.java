@@ -44,4 +44,13 @@ public interface UsernameRepository {
      */
     Flux<Username> findAvailableByLanguage(Language language, int limit);
 
+    /**
+     * Marks a username as used in the database.
+     * Sets is_used = TRUE and used_at = current timestamp.
+     *
+     * @param username the username to mark as used
+     * @return Mono<Boolean> true if username was updated, false if not found or already used
+     */
+    Mono<Boolean> markAsUsed(String username);
+
 }

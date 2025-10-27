@@ -15,6 +15,7 @@ import org.springframework.boot.autoconfigure.data.redis.RedisAutoConfiguration;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Primary;
+import org.springframework.context.annotation.Profile;
 import org.springframework.data.redis.connection.ReactiveRedisConnectionFactory;
 import org.springframework.data.redis.core.ReactiveRedisTemplate;
 import reactor.core.publisher.Flux;
@@ -23,9 +24,11 @@ import reactor.core.publisher.Mono;
 /**
  * Cache configuration that provides a fallback no-op CacheService
  * when Redis is not available.
+ * Excluded from test profile to allow test-specific Redis configurations.
  */
 @Slf4j
 @Configuration
+@Profile("!test")
 @AutoConfigureAfter({RedisAutoConfiguration.class, RedisConfig.class})
 public class CacheConfig {
 
