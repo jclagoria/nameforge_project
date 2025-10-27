@@ -1,6 +1,6 @@
 package com.forge.adapters.inbound.rest;
 
-import com.forge.adapters.inbound.dto.ValidationResponseDto;
+import com.forge.adapters.inbound.dto.*;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.enums.ParameterIn;
@@ -16,9 +16,6 @@ import org.springframework.http.MediaType;
 import org.springframework.web.bind.annotation.RequestMethod;
 import org.springframework.web.reactive.function.server.RouterFunction;
 import org.springframework.web.reactive.function.server.ServerResponse;
-import com.forge.adapters.inbound.dto.GenerationRequestDto;
-import com.forge.adapters.inbound.dto.UsernameResponseDto;
-import com.forge.adapters.inbound.dto.ErrorResponseDto;
 
 import static org.springframework.web.reactive.function.server.RequestPredicates.accept;
 import static org.springframework.web.reactive.function.server.RequestPredicates.contentType;
@@ -136,6 +133,57 @@ public class UsernameRouter {
                                     )
                             }
                     )
+            ),
+            @RouterOperation(
+                    path = "/api/v1/usernames/mark-used/{username}",
+                    method = RequestMethod.POST,
+                    beanClass = UsernameHandler.class,
+                    beanMethod = "markUsed",
+                    operation = @Operation(
+                            operationId = "markUsernameAsUsed",
+                            summary = "Mark Username as Used",
+                            description = "Mark a generated username as used (claimed by a user). Updates database and invalidates cache.",
+                            tags = {"Username Management"},
+                            parameters = {
+                                    @Parameter(
+                                            name = "username",
+                                            description = "Username to mark as used (5-30 chars, [a-z0-9_-])",
+                                            required = true,
+                                            in = ParameterIn.PATH,
+                                            schema = @Schema(
+                                                    type = "string",
+                                                    pattern = "^[a-z0-9_-]{5,30}$",
+                                                    example = "cleverpanda42"
+                                            )
+                                    )
+                            },
+                            responses = {
+                                    @ApiResponse(
+                                            responseCode = "200",
+                                            description = "Username marked as used successfully (or was already used)",
+                                            content = @Content(
+                                                    mediaType = "application/json",
+                                                    schema = @Schema(implementation = MarkUsedResponseDto.class)
+                                            )
+                                    ),
+                                    @ApiResponse(
+                                            responseCode = "400",
+                                            description = "Invalid username format",
+                                            content = @Content(
+                                                    mediaType = "application/json",
+                                                    schema = @Schema(implementation = ErrorResponseDto.class)
+                                            )
+                                    ),
+                                    @ApiResponse(
+                                            responseCode = "500",
+                                            description = "Internal server error",
+                                            content = @Content(
+                                                    mediaType = "application/json",
+                                                    schema = @Schema(implementation = ErrorResponseDto.class)
+                                            )
+                                    )
+                            }
+                    )
             )
     })
     public RouterFunction<ServerResponse> usernamesRouter(UsernameHandler handler) {
@@ -149,6 +197,9 @@ public class UsernameRouter {
                                 .GET("/validate/{username}",
                                         accept(MediaType.APPLICATION_JSON),
                                         handler::validate)
+                                .POST("/mark-used/{username}",
+                                        accept(MediaType.APPLICATION_JSON),
+                                        handler::markUsed)
                 )
                 .build();
     }

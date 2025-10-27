@@ -501,4 +501,372 @@ class RestEndpointIntegrationTest {
                     .expectStatus().isBadRequest();
         }
     }
+
+    @Nested
+    @DisplayName("Mark Used Endpoint Integration Tests")
+    class MarkUsedEndpointTests {
+
+        @Test
+        @DisplayName("Should mark username as used successfully when username exists and is available")
+        void shouldMarkUsernameAsUsedSuccessfullyWhenUsernameExistsAndIsAvailable() {
+            // Given - Insert an available username into database
+            String username = "available_user_123";
+            databaseClient.sql(
+                    "INSERT INTO generated_usernames (username, language, pattern_type, created_at, is_used) " +
+                    "VALUES (:username, 'EN', 'CLASSIC', NOW(), FALSE)"
+            )
+            .bind("username", username)
+            .fetch()
+            .rowsUpdated()
+            .block();
+
+            // When & Then - Mark username as used
+            webTestClient.post()
+                    .uri("/api/v1/usernames/mark-used/{username}", username)
+                    .accept(MediaType.APPLICATION_JSON)
+                    .exchange()
+                    .expectStatus().isOk()
+                    .expectHeader().contentType(MediaType.APPLICATION_JSON)
+                    .expectBody()
+                    .jsonPath("$.username").isEqualTo(username)
+                    .jsonPath("$.marked").isEqualTo(true)
+                    .jsonPath("$.wasAlreadyUsed").isEqualTo(false)
+                    .jsonPath("$.markedAt").exists()
+                    .jsonPath("$.message").exists();
+
+            // Verify database state changed
+            Boolean isUsed = databaseClient.sql(
+                    "SELECT is_used FROM generated_usernames WHERE username = :username"
+            )
+            .bind("username", username)
+            .map(row -> row.get("is_used", Boolean.class))
+            .one()
+            .block();
+
+            assertThat(isUsed).as("Username should be marked as used in database").isTrue();
+        }
+
+        @Test
+        @DisplayName("Should return OK with wasAlreadyUsed=true when username is already marked (idempotent)")
+        void shouldReturnOkWithWasAlreadyUsedTrueWhenUsernameIsAlreadyMarked() {
+            // Given - Insert an already used username into database
+            String username = "already_used_user";
+            databaseClient.sql(
+                    "INSERT INTO generated_usernames (username, language, pattern_type, created_at, is_used, used_at) " +
+                    "VALUES (:username, 'EN', 'CLASSIC', NOW(), TRUE, NOW())"
+            )
+            .bind("username", username)
+            .fetch()
+            .rowsUpdated()
+            .block();
+
+            // When & Then - Try to mark already used username (idempotent operation)
+            webTestClient.post()
+                    .uri("/api/v1/usernames/mark-used/{username}", username)
+                    .accept(MediaType.APPLICATION_JSON)
+                    .exchange()
+                    .expectStatus().isOk()
+                    .expectHeader().contentType(MediaType.APPLICATION_JSON)
+                    .expectBody()
+                    .jsonPath("$.username").isEqualTo(username)
+                    .jsonPath("$.marked").isEqualTo(false)
+                    .jsonPath("$.wasAlreadyUsed").isEqualTo(true)
+                    .jsonPath("$.message").exists();
+        }
+
+        @Test
+        @DisplayName("Should return OK with marked=false when username does not exist in database")
+        void shouldReturnOkWithMarkedFalseWhenUsernameDoesNotExist() {
+            // Given - username that doesn't exist in database
+            String nonExistentUsername = "nonexistent_user_999";
+
+            // When & Then - Try to mark non-existent username
+            webTestClient.post()
+                    .uri("/api/v1/usernames/mark-used/{username}", nonExistentUsername)
+                    .accept(MediaType.APPLICATION_JSON)
+                    .exchange()
+                    .expectStatus().isOk()
+                    .expectHeader().contentType(MediaType.APPLICATION_JSON)
+                    .expectBody()
+                    .jsonPath("$.username").isEqualTo(nonExistentUsername)
+                    .jsonPath("$.marked").isEqualTo(false)
+                    .jsonPath("$.wasAlreadyUsed").isEqualTo(true);
+        }
+
+        @Test
+        @DisplayName("Should invalidate cache after marking username as used")
+        void shouldInvalidateCacheAfterMarkingUsernameAsUsed() {
+            // Given - Insert available username and validate it to populate cache
+            String username = "cache_test_user";
+            databaseClient.sql(
+                    "INSERT INTO generated_usernames (username, language, pattern_type, created_at, is_used) " +
+                    "VALUES (:username, 'EN', 'CLASSIC', NOW(), FALSE)"
+            )
+            .bind("username", username)
+            .fetch()
+            .rowsUpdated()
+            .block();
+
+            // Validate username to populate cache
+            webTestClient.get()
+                    .uri("/api/v1/usernames/validate/{username}?language=EN", username)
+                    .accept(MediaType.APPLICATION_JSON)
+                    .exchange()
+                    .expectStatus().isOk()
+                    .expectBody()
+                    .jsonPath("$.isUnique").isEqualTo(false); // Should be NOT unique (exists in DB)
+
+            // Verify cache contains validation result
+            String cacheKey = "validation:usernames" + username.toLowerCase() + ":en:V1";
+            Boolean hasKeyBefore = redisTemplate.hasKey(cacheKey).block();
+            assertThat(hasKeyBefore).as("Cache should contain validation before marking").isTrue();
+
+            // When - Mark username as used
+            webTestClient.post()
+                    .uri("/api/v1/usernames/mark-used/{username}", username)
+                    .accept(MediaType.APPLICATION_JSON)
+                    .exchange()
+                    .expectStatus().isOk()
+                    .expectBody()
+                    .jsonPath("$.marked").isEqualTo(true);
+
+            // Then - Verify cache was invalidated
+            Boolean hasKeyAfter = redisTemplate.hasKey(cacheKey).block();
+            assertThat(hasKeyAfter).as("Cache should be invalidated after marking").isFalse();
+        }
+
+        @Test
+        @DisplayName("Should handle marking multiple different usernames successfully")
+        void shouldHandleMarkingMultipleDifferentUsernamesSuccessfully() {
+            // Given - Insert multiple available usernames
+            String username1 = "user_1_to_mark";
+            String username2 = "user_2_to_mark";
+            String username3 = "user_3_to_mark";
+
+            databaseClient.sql(
+                    "INSERT INTO generated_usernames (username, language, pattern_type, created_at, is_used) " +
+                    "VALUES (:username1, 'EN', 'CLASSIC', NOW(), FALSE), " +
+                    "       (:username2, 'EN', 'CLASSIC', NOW(), FALSE), " +
+                    "       (:username3, 'EN', 'CLASSIC', NOW(), FALSE)"
+            )
+            .bind("username1", username1)
+            .bind("username2", username2)
+            .bind("username3", username3)
+            .fetch()
+            .rowsUpdated()
+            .block();
+
+            // When - Mark each username as used
+            webTestClient.post()
+                    .uri("/api/v1/usernames/mark-used/{username}", username1)
+                    .exchange()
+                    .expectStatus().isOk()
+                    .expectBody()
+                    .jsonPath("$.marked").isEqualTo(true);
+
+            webTestClient.post()
+                    .uri("/api/v1/usernames/mark-used/{username}", username2)
+                    .exchange()
+                    .expectStatus().isOk()
+                    .expectBody()
+                    .jsonPath("$.marked").isEqualTo(true);
+
+            webTestClient.post()
+                    .uri("/api/v1/usernames/mark-used/{username}", username3)
+                    .exchange()
+                    .expectStatus().isOk()
+                    .expectBody()
+                    .jsonPath("$.marked").isEqualTo(true);
+
+            // Then - Verify all are marked in database
+            Long usedCount = databaseClient.sql(
+                    "SELECT COUNT(*) FROM generated_usernames WHERE is_used = TRUE"
+            )
+            .fetch()
+            .first()
+            .map(row -> ((Number) row.get("count")).longValue())
+            .block();
+
+            assertThat(usedCount).as("All three usernames should be marked as used").isEqualTo(3L);
+        }
+
+        @Test
+        @DisplayName("Should demonstrate idempotent behavior on multiple mark requests")
+        void shouldDemonstrateIdempotentBehaviorOnMultipleMarkRequests() {
+            // Given - Insert available username
+            String username = "idempotent_test_user";
+            databaseClient.sql(
+                    "INSERT INTO generated_usernames (username, language, pattern_type, created_at, is_used) " +
+                    "VALUES (:username, 'EN', 'CLASSIC', NOW(), FALSE)"
+            )
+            .bind("username", username)
+            .fetch()
+            .rowsUpdated()
+            .block();
+
+            // First request - should successfully mark as used
+            webTestClient.post()
+                    .uri("/api/v1/usernames/mark-used/{username}", username)
+                    .exchange()
+                    .expectStatus().isOk()
+                    .expectBody()
+                    .jsonPath("$.marked").isEqualTo(true)
+                    .jsonPath("$.wasAlreadyUsed").isEqualTo(false);
+
+            // Second request - idempotent, returns already used
+            webTestClient.post()
+                    .uri("/api/v1/usernames/mark-used/{username}", username)
+                    .exchange()
+                    .expectStatus().isOk()
+                    .expectBody()
+                    .jsonPath("$.marked").isEqualTo(false)
+                    .jsonPath("$.wasAlreadyUsed").isEqualTo(true);
+
+            // Third request - still idempotent
+            webTestClient.post()
+                    .uri("/api/v1/usernames/mark-used/{username}", username)
+                    .exchange()
+                    .expectStatus().isOk()
+                    .expectBody()
+                    .jsonPath("$.marked").isEqualTo(false)
+                    .jsonPath("$.wasAlreadyUsed").isEqualTo(true);
+        }
+
+        @Test
+        @DisplayName("Should handle username with special characters in path variable")
+        void shouldHandleUsernameWithSpecialCharactersInPathVariable() {
+            // Given - Username with underscores and hyphens
+            String username = "user_name-123";
+            databaseClient.sql(
+                    "INSERT INTO generated_usernames (username, language, pattern_type, created_at, is_used) " +
+                    "VALUES (:username, 'EN', 'CLASSIC', NOW(), FALSE)"
+            )
+            .bind("username", username)
+            .fetch()
+            .rowsUpdated()
+            .block();
+
+            // When & Then
+            webTestClient.post()
+                    .uri("/api/v1/usernames/mark-used/{username}", username)
+                    .exchange()
+                    .expectStatus().isOk()
+                    .expectBody()
+                    .jsonPath("$.username").isEqualTo(username)
+                    .jsonPath("$.marked").isEqualTo(true);
+        }
+
+        @Test
+        @DisplayName("Should verify used_at timestamp is set when marking username")
+        void shouldVerifyUsedAtTimestampIsSetWhenMarkingUsername() {
+            // Given - Insert available username
+            String username = "timestamp_test_user";
+            databaseClient.sql(
+                    "INSERT INTO generated_usernames (username, language, pattern_type, created_at, is_used) " +
+                    "VALUES (:username, 'EN', 'CLASSIC', NOW(), FALSE)"
+            )
+            .bind("username", username)
+            .fetch()
+            .rowsUpdated()
+            .block();
+
+            // When - Mark username as used
+            webTestClient.post()
+                    .uri("/api/v1/usernames/mark-used/{username}", username)
+                    .exchange()
+                    .expectStatus().isOk()
+                    .expectBody()
+                    .jsonPath("$.marked").isEqualTo(true)
+                    .jsonPath("$.markedAt").exists()
+                    .jsonPath("$.markedAt").isNotEmpty();
+
+            // Then - Verify used_at is set in database
+            Object usedAt = databaseClient.sql(
+                    "SELECT used_at FROM generated_usernames WHERE username = :username"
+            )
+            .bind("username", username)
+            .map(row -> row.get("used_at"))
+            .one()
+            .block();
+
+            assertThat(usedAt).as("used_at timestamp should be set in database").isNotNull();
+        }
+
+        @Test
+        @DisplayName("Should handle concurrent marking of same username gracefully")
+        void shouldHandleConcurrentMarkingOfSameUsernameGracefully() {
+            // Given - Insert available username
+            String username = "concurrent_test_user";
+            databaseClient.sql(
+                    "INSERT INTO generated_usernames (username, language, pattern_type, created_at, is_used) " +
+                    "VALUES (:username, 'EN', 'CLASSIC', NOW(), FALSE)"
+            )
+            .bind("username", username)
+            .fetch()
+            .rowsUpdated()
+            .block();
+
+            // When - Simulate concurrent requests (sequential for test purposes)
+            // First request should succeed
+            webTestClient.post()
+                    .uri("/api/v1/usernames/mark-used/{username}", username)
+                    .exchange()
+                    .expectStatus().isOk()
+                    .expectBody()
+                    .jsonPath("$.marked").isEqualTo(true);
+
+            // Second concurrent request should return already used
+            webTestClient.post()
+                    .uri("/api/v1/usernames/mark-used/{username}", username)
+                    .exchange()
+                    .expectStatus().isOk()
+                    .expectBody()
+                    .jsonPath("$.marked").isEqualTo(false)
+                    .jsonPath("$.wasAlreadyUsed").isEqualTo(true);
+
+            // Verify only marked once in database
+            Long usedCount = databaseClient.sql(
+                    "SELECT COUNT(*) FROM generated_usernames WHERE username = :username AND is_used = TRUE"
+            )
+            .bind("username", username)
+            .fetch()
+            .first()
+            .map(row -> ((Number) row.get("count")).longValue())
+            .block();
+
+            assertThat(usedCount).as("Username should only be marked once").isEqualTo(1L);
+        }
+
+        @Test
+        @DisplayName("Should mark username and verify validation returns not unique afterwards")
+        void shouldMarkUsernameAndVerifyValidationReturnsNotUniqueAfterwards() {
+            // Given - Insert available username
+            String username = "validation_after_mark_user";
+            databaseClient.sql(
+                    "INSERT INTO generated_usernames (username, language, pattern_type, created_at, is_used) " +
+                    "VALUES (:username, 'EN', 'CLASSIC', NOW(), FALSE)"
+            )
+            .bind("username", username)
+            .fetch()
+            .rowsUpdated()
+            .block();
+
+            // When - Mark username as used
+            webTestClient.post()
+                    .uri("/api/v1/usernames/mark-used/{username}", username)
+                    .exchange()
+                    .expectStatus().isOk()
+                    .expectBody()
+                    .jsonPath("$.marked").isEqualTo(true);
+
+            // Then - Validate username should show as not unique (exists and is used)
+            webTestClient.get()
+                    .uri("/api/v1/usernames/validate/{username}?language=EN", username)
+                    .exchange()
+                    .expectStatus().isOk()
+                    .expectBody()
+                    .jsonPath("$.isUnique").isEqualTo(false)
+                    .jsonPath("$.isValid").isEqualTo(false);
+        }
+    }
 }
