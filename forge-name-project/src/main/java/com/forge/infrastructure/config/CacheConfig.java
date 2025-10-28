@@ -94,5 +94,10 @@ public class CacheConfig {
         public Mono<Void> invalidateValidation(String username) {
             return Mono.empty();
         }
+
+        @Override
+        public Mono<Void> invalidateGenerationCaches() {
+            return Mono.empty();
+        }
     }
 }

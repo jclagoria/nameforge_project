@@ -64,4 +64,12 @@ public interface CacheService {
      * @return Mono<Void> completion signal
      */
     Mono<Void> invalidateValidation(String username);
+
+    /**
+     * Invalidates all generation caches across all languages.
+     * Used when username availability changes (e.g., username marked as used).
+     *
+     * @return Mono<Void> completion signal
+     */
+    Mono<Void> invalidateGenerationCaches();
 }
