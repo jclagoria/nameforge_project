@@ -32,6 +32,36 @@ type Query {
 }
 
 """
+Response containing mark-used operation results
+"""
+type MarkUsedResponse {
+    """
+    The username that was processed
+    """
+    username: String!
+
+    """
+    Whether the username was successfully marked as used
+    """
+    marked: Boolean!
+
+    """
+    Whether the username was already used before this request
+    """
+    wasAlreadyUsed: Boolean!
+
+    """
+    Timestamp when the username was marked as used (ISO 8601)
+    """
+    markedAt: String
+
+    """
+    Human-readable message describing the result
+    """
+    message: String!
+}
+
+"""
 Mutation operations for data modification
 """
 type Mutation {
@@ -40,17 +70,34 @@ type Mutation {
 
     Example:
     mutation {
-    generateUsernames(input: { language: EN, count: 5 }) {
-    usernames
-    generatedAt
-    language
-    totalGenerated
-    cacheHit
-    responseTimeMs
-    }
+        generateUsernames(input: { language: EN, count: 5 }) {
+            usernames
+            generatedAt
+            language
+            totalGenerated
+            cacheHit
+            responseTimeMs
+        }
     }
     """
     generateUsernames(input: GenerateUsernamesInput!): UsernameGenerationResponse!
+
+    """
+    Mark a username as used (claimed by a user)
+    Updates database and invalidates cache layers.
+
+    Example:
+    mutation {
+        markUsernameAsUsed(username: "cleverpanda42") {
+            username
+            marked
+            wasAlreadyUsed
+            markedAt
+            message
+        }
+    }
+    """
+    markUsernameAsUsed(username: String!): MarkUsedResponse!
 }
 
 """

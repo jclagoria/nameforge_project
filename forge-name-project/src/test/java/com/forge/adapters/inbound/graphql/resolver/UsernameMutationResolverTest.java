@@ -1,14 +1,18 @@
 package com.forge.adapters.inbound.graphql.resolver;
 
 import com.forge.adapters.inbound.graphql.input.GenerateUsernameInput;
+import com.forge.adapters.inbound.graphql.mapper.GraphQLMarkUsedMapper;
 import com.forge.adapters.inbound.graphql.mapper.GraphQLRequestMapper;
 import com.forge.adapters.inbound.graphql.mapper.GraphQLResponseMapper;
+import com.forge.adapters.inbound.graphql.type.MarkUsedResponse;
 import com.forge.adapters.inbound.graphql.type.UsernameGenerationResponse;
 import com.forge.domain.model.GenerationRequest;
 import com.forge.domain.model.GenerationResponse;
 import com.forge.domain.model.Language;
+import com.forge.domain.model.MarkUsedResult;
 import com.forge.domain.model.Username;
 import com.forge.domain.ports.inbound.UsernameGenerationUseCase;
+import com.forge.domain.ports.inbound.UsernameMarkUsedUseCase;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -19,6 +23,8 @@ import reactor.core.publisher.Mono;
 import reactor.test.StepVerifier;
 
 import java.time.Instant;
+import java.time.LocalDateTime;
+import java.time.ZoneOffset;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -37,10 +43,16 @@ class UsernameMutationResolverTest {
     private UsernameGenerationUseCase usernameGenerationUseCase;
 
     @Mock
+    private UsernameMarkUsedUseCase usernameMarkUsedUseCase;
+
+    @Mock
     private GraphQLRequestMapper requestMapper;
 
     @Mock
     private GraphQLResponseMapper responseMapper;
+
+    @Mock
+    private GraphQLMarkUsedMapper markUsedMapper;
 
     private UsernameMutationResolver resolver;
 
@@ -48,8 +60,10 @@ class UsernameMutationResolverTest {
     void setUp() {
         resolver = new UsernameMutationResolver(
                 usernameGenerationUseCase,
+                usernameMarkUsedUseCase,
                 requestMapper,
-                responseMapper
+                responseMapper,
+                markUsedMapper
         );
     }
 
@@ -462,6 +476,412 @@ class UsernameMutationResolverTest {
         inOrder.verify(usernameGenerationUseCase).generate(domainRequest);
         inOrder.verify(responseMapper).toGraphQL(domainResponse);
         inOrder.verifyNoMoreInteractions();
+    }
+
+    // ==========================================
+    // Mark Username As Used Mutation Tests
+    // ==========================================
+
+    @Test
+    @DisplayName("Should mark username as used successfully on first marking")
+    void shouldMarkUsernameAsUsedSuccessfullyOnFirstMarking() {
+        // ARRANGE
+        String username = "cleverpanda42";
+        LocalDateTime markedAt = LocalDateTime.of(2025, 10, 28, 14, 30, 0);
+
+        MarkUsedResult domainResult = MarkUsedResult.marked(username, markedAt);
+        MarkUsedResponse graphqlResponse = MarkUsedResponse.of(
+                username,
+                true,
+                false,
+                markedAt.toInstant(ZoneOffset.UTC),
+                "Username successfully marked as used"
+        );
+
+        when(usernameMarkUsedUseCase.markAsUsed(username)).thenReturn(Mono.just(domainResult));
+        when(markUsedMapper.toGraphQL(domainResult)).thenReturn(graphqlResponse);
+
+        // ACT
+        Mono<MarkUsedResponse> result = resolver.markUsernameAsUsed(username);
+
+        // ASSERT
+        StepVerifier.create(result)
+                .assertNext(response -> {
+                    assertThat(response).isNotNull();
+                    assertThat(response.username()).isEqualTo(username);
+                    assertThat(response.marked()).isTrue();
+                    assertThat(response.wasAlreadyUsed()).isFalse();
+                    assertThat(response.markedAt()).isNotNull();
+                    assertThat(response.markedAt()).isEqualTo(markedAt.toInstant(ZoneOffset.UTC));
+                    assertThat(response.message()).isEqualTo("Username successfully marked as used");
+                })
+                .verifyComplete();
+
+        verify(usernameMarkUsedUseCase).markAsUsed(username);
+        verify(markUsedMapper).toGraphQL(domainResult);
+        verifyNoMoreInteractions(usernameMarkUsedUseCase, markUsedMapper);
+    }
+
+    @Test
+    @DisplayName("Should return already used response when marking duplicate username")
+    void shouldReturnAlreadyUsedResponseWhenMarkingDuplicateUsername() {
+        // ARRANGE
+        String username = "existinguser123";
+
+        MarkUsedResult domainResult = MarkUsedResult.alreadyUsed(username);
+        MarkUsedResponse graphqlResponse = MarkUsedResponse.of(
+                username,
+                false,
+                true,
+                null,
+                "Username was already used"
+        );
+
+        when(usernameMarkUsedUseCase.markAsUsed(username)).thenReturn(Mono.just(domainResult));
+        when(markUsedMapper.toGraphQL(domainResult)).thenReturn(graphqlResponse);
+
+        // ACT
+        Mono<MarkUsedResponse> result = resolver.markUsernameAsUsed(username);
+
+        // ASSERT
+        StepVerifier.create(result)
+                .assertNext(response -> {
+                    assertThat(response).isNotNull();
+                    assertThat(response.username()).isEqualTo(username);
+                    assertThat(response.marked()).isFalse();
+                    assertThat(response.wasAlreadyUsed()).isTrue();
+                    assertThat(response.markedAt()).isNull();
+                    assertThat(response.message()).isEqualTo("Username was already used");
+                })
+                .verifyComplete();
+
+        verify(usernameMarkUsedUseCase).markAsUsed(username);
+        verify(markUsedMapper).toGraphQL(domainResult);
+    }
+
+    @Test
+    @DisplayName("Should mark username with minimum valid length")
+    void shouldMarkUsernameWithMinimumValidLength() {
+        // ARRANGE
+        String username = "abc12"; // 5 characters
+        LocalDateTime markedAt = LocalDateTime.now();
+
+        MarkUsedResult domainResult = MarkUsedResult.marked(username, markedAt);
+        MarkUsedResponse graphqlResponse = MarkUsedResponse.of(
+                username,
+                true,
+                false,
+                markedAt.toInstant(ZoneOffset.UTC),
+                "Username successfully marked as used"
+        );
+
+        when(usernameMarkUsedUseCase.markAsUsed(username)).thenReturn(Mono.just(domainResult));
+        when(markUsedMapper.toGraphQL(domainResult)).thenReturn(graphqlResponse);
+
+        // ACT
+        Mono<MarkUsedResponse> result = resolver.markUsernameAsUsed(username);
+
+        // ASSERT
+        StepVerifier.create(result)
+                .assertNext(response -> {
+                    assertThat(response).isNotNull();
+                    assertThat(response.username()).isEqualTo(username);
+                    assertThat(response.marked()).isTrue();
+                })
+                .verifyComplete();
+
+        verify(usernameMarkUsedUseCase).markAsUsed(username);
+        verify(markUsedMapper).toGraphQL(domainResult);
+    }
+
+    @Test
+    @DisplayName("Should mark username with maximum valid length")
+    void shouldMarkUsernameWithMaximumValidLength() {
+        // ARRANGE
+        String username = "a".repeat(30); // 30 characters
+        LocalDateTime markedAt = LocalDateTime.now();
+
+        MarkUsedResult domainResult = MarkUsedResult.marked(username, markedAt);
+        MarkUsedResponse graphqlResponse = MarkUsedResponse.of(
+                username,
+                true,
+                false,
+                markedAt.toInstant(ZoneOffset.UTC),
+                "Username successfully marked as used"
+        );
+
+        when(usernameMarkUsedUseCase.markAsUsed(username)).thenReturn(Mono.just(domainResult));
+        when(markUsedMapper.toGraphQL(domainResult)).thenReturn(graphqlResponse);
+
+        // ACT
+        Mono<MarkUsedResponse> result = resolver.markUsernameAsUsed(username);
+
+        // ASSERT
+        StepVerifier.create(result)
+                .assertNext(response -> {
+                    assertThat(response).isNotNull();
+                    assertThat(response.username()).isEqualTo(username);
+                    assertThat(response.username()).hasSize(30);
+                    assertThat(response.marked()).isTrue();
+                })
+                .verifyComplete();
+
+        verify(usernameMarkUsedUseCase).markAsUsed(username);
+    }
+
+    @Test
+    @DisplayName("Should mark username with special allowed characters")
+    void shouldMarkUsernameWithSpecialAllowedCharacters() {
+        // ARRANGE
+        String username = "user_name-123";
+        LocalDateTime markedAt = LocalDateTime.now();
+
+        MarkUsedResult domainResult = MarkUsedResult.marked(username, markedAt);
+        MarkUsedResponse graphqlResponse = MarkUsedResponse.of(
+                username,
+                true,
+                false,
+                markedAt.toInstant(ZoneOffset.UTC),
+                "Username successfully marked as used"
+        );
+
+        when(usernameMarkUsedUseCase.markAsUsed(username)).thenReturn(Mono.just(domainResult));
+        when(markUsedMapper.toGraphQL(domainResult)).thenReturn(graphqlResponse);
+
+        // ACT
+        Mono<MarkUsedResponse> result = resolver.markUsernameAsUsed(username);
+
+        // ASSERT
+        StepVerifier.create(result)
+                .assertNext(response -> {
+                    assertThat(response).isNotNull();
+                    assertThat(response.username()).isEqualTo(username);
+                    assertThat(response.marked()).isTrue();
+                })
+                .verifyComplete();
+
+        verify(usernameMarkUsedUseCase).markAsUsed(username);
+        verify(markUsedMapper).toGraphQL(domainResult);
+    }
+
+    @Test
+    @DisplayName("Should handle use case error during mark operation")
+    void shouldHandleUseCaseErrorDuringMarkOperation() {
+        // ARRANGE
+        String username = "erroruser";
+
+        when(usernameMarkUsedUseCase.markAsUsed(username))
+                .thenReturn(Mono.error(new RuntimeException("Database connection failed")));
+
+        // ACT
+        Mono<MarkUsedResponse> result = resolver.markUsernameAsUsed(username);
+
+        // ASSERT
+        StepVerifier.create(result)
+                .expectErrorMatches(error ->
+                        error instanceof RuntimeException &&
+                        error.getMessage().equals("Database connection failed")
+                )
+                .verify();
+
+        verify(usernameMarkUsedUseCase).markAsUsed(username);
+        verifyNoInteractions(markUsedMapper);
+    }
+
+    @Test
+    @DisplayName("Should handle mapper error during mark response mapping")
+    void shouldHandleMapperErrorDuringMarkResponseMapping() {
+        // ARRANGE
+        String username = "mapperroruser";
+        LocalDateTime markedAt = LocalDateTime.now();
+        MarkUsedResult domainResult = MarkUsedResult.marked(username, markedAt);
+
+        when(usernameMarkUsedUseCase.markAsUsed(username)).thenReturn(Mono.just(domainResult));
+        when(markUsedMapper.toGraphQL(domainResult))
+                .thenThrow(new IllegalArgumentException("Invalid mapping"));
+
+        // ACT
+        Mono<MarkUsedResponse> result = resolver.markUsernameAsUsed(username);
+
+        // ASSERT
+        StepVerifier.create(result)
+                .expectErrorMatches(error ->
+                        error instanceof IllegalArgumentException &&
+                        error.getMessage().equals("Invalid mapping")
+                )
+                .verify();
+
+        verify(usernameMarkUsedUseCase).markAsUsed(username);
+        verify(markUsedMapper).toGraphQL(domainResult);
+    }
+
+    @Test
+    @DisplayName("Should complete reactive chain successfully for mark operation")
+    void shouldCompleteReactiveChainSuccessfullyForMarkOperation() {
+        // ARRANGE
+        String username = "reactiveuser";
+        LocalDateTime markedAt = LocalDateTime.now();
+
+        MarkUsedResult domainResult = MarkUsedResult.marked(username, markedAt);
+        MarkUsedResponse graphqlResponse = MarkUsedResponse.of(
+                username,
+                true,
+                false,
+                markedAt.toInstant(ZoneOffset.UTC),
+                "Username successfully marked as used"
+        );
+
+        when(usernameMarkUsedUseCase.markAsUsed(any(String.class))).thenReturn(Mono.just(domainResult));
+        when(markUsedMapper.toGraphQL(any(MarkUsedResult.class))).thenReturn(graphqlResponse);
+
+        // ACT
+        Mono<MarkUsedResponse> result = resolver.markUsernameAsUsed(username);
+
+        // ASSERT
+        StepVerifier.create(result)
+                .assertNext(response -> assertThat(response).isNotNull())
+                .verifyComplete();
+
+        verify(usernameMarkUsedUseCase, times(1)).markAsUsed(any(String.class));
+        verify(markUsedMapper, times(1)).toGraphQL(any(MarkUsedResult.class));
+    }
+
+    @Test
+    @DisplayName("Should verify mark operation dependencies are called in correct order")
+    void shouldVerifyMarkOperationDependenciesAreCalledInCorrectOrder() {
+        // ARRANGE
+        String username = "ordertest";
+        LocalDateTime markedAt = LocalDateTime.of(2025, 10, 28, 16, 0, 0);
+
+        MarkUsedResult domainResult = MarkUsedResult.marked(username, markedAt);
+        MarkUsedResponse graphqlResponse = MarkUsedResponse.of(
+                username,
+                true,
+                false,
+                markedAt.toInstant(ZoneOffset.UTC),
+                "Username successfully marked as used"
+        );
+
+        when(usernameMarkUsedUseCase.markAsUsed(username)).thenReturn(Mono.just(domainResult));
+        when(markUsedMapper.toGraphQL(domainResult)).thenReturn(graphqlResponse);
+
+        // ACT
+        resolver.markUsernameAsUsed(username).block();
+
+        // ASSERT - Verify call order
+        var inOrder = inOrder(usernameMarkUsedUseCase, markUsedMapper);
+        inOrder.verify(usernameMarkUsedUseCase).markAsUsed(username);
+        inOrder.verify(markUsedMapper).toGraphQL(domainResult);
+        inOrder.verifyNoMoreInteractions();
+    }
+
+    @Test
+    @DisplayName("Should preserve timestamp precision in mark operation response")
+    void shouldPreserveTimestampPrecisionInMarkOperationResponse() {
+        // ARRANGE
+        String username = "preciseuser";
+        LocalDateTime markedAt = LocalDateTime.of(2025, 3, 21, 15, 45, 30, 123456789);
+
+        MarkUsedResult domainResult = MarkUsedResult.marked(username, markedAt);
+        MarkUsedResponse graphqlResponse = MarkUsedResponse.of(
+                username,
+                true,
+                false,
+                markedAt.toInstant(ZoneOffset.UTC),
+                "Username successfully marked as used"
+        );
+
+        when(usernameMarkUsedUseCase.markAsUsed(username)).thenReturn(Mono.just(domainResult));
+        when(markUsedMapper.toGraphQL(domainResult)).thenReturn(graphqlResponse);
+
+        // ACT
+        Mono<MarkUsedResponse> result = resolver.markUsernameAsUsed(username);
+
+        // ASSERT
+        StepVerifier.create(result)
+                .assertNext(response -> {
+                    assertThat(response.markedAt()).isNotNull();
+                    assertThat(response.markedAt().getNano()).isEqualTo(123456789);
+                    assertThat(response.markedAt()).isEqualTo(markedAt.toInstant(ZoneOffset.UTC));
+                })
+                .verifyComplete();
+
+        verify(usernameMarkUsedUseCase).markAsUsed(username);
+        verify(markUsedMapper).toGraphQL(domainResult);
+    }
+
+    @Test
+    @DisplayName("Should handle concurrent mark requests for different usernames")
+    void shouldHandleConcurrentMarkRequestsForDifferentUsernames() {
+        // ARRANGE
+        String username1 = "concurrent1";
+        String username2 = "concurrent2";
+        LocalDateTime markedAt1 = LocalDateTime.now();
+        LocalDateTime markedAt2 = LocalDateTime.now().plusSeconds(1);
+
+        MarkUsedResult domainResult1 = MarkUsedResult.marked(username1, markedAt1);
+        MarkUsedResult domainResult2 = MarkUsedResult.marked(username2, markedAt2);
+
+        MarkUsedResponse graphqlResponse1 = MarkUsedResponse.of(
+                username1, true, false, markedAt1.toInstant(ZoneOffset.UTC), "Username successfully marked as used"
+        );
+        MarkUsedResponse graphqlResponse2 = MarkUsedResponse.of(
+                username2, true, false, markedAt2.toInstant(ZoneOffset.UTC), "Username successfully marked as used"
+        );
+
+        when(usernameMarkUsedUseCase.markAsUsed(username1)).thenReturn(Mono.just(domainResult1));
+        when(usernameMarkUsedUseCase.markAsUsed(username2)).thenReturn(Mono.just(domainResult2));
+        when(markUsedMapper.toGraphQL(domainResult1)).thenReturn(graphqlResponse1);
+        when(markUsedMapper.toGraphQL(domainResult2)).thenReturn(graphqlResponse2);
+
+        // ACT
+        Mono<MarkUsedResponse> result1 = resolver.markUsernameAsUsed(username1);
+        Mono<MarkUsedResponse> result2 = resolver.markUsernameAsUsed(username2);
+
+        // ASSERT
+        StepVerifier.create(result1)
+                .assertNext(response -> assertThat(response.username()).isEqualTo(username1))
+                .verifyComplete();
+
+        StepVerifier.create(result2)
+                .assertNext(response -> assertThat(response.username()).isEqualTo(username2))
+                .verifyComplete();
+
+        verify(usernameMarkUsedUseCase).markAsUsed(username1);
+        verify(usernameMarkUsedUseCase).markAsUsed(username2);
+    }
+
+    @Test
+    @DisplayName("Should validate username before marking through use case")
+    void shouldValidateUsernameBeforeMarkingThroughUseCase() {
+        // ARRANGE
+        String validUsername = "valid_user_123";
+        LocalDateTime markedAt = LocalDateTime.now();
+
+        MarkUsedResult domainResult = MarkUsedResult.marked(validUsername, markedAt);
+        MarkUsedResponse graphqlResponse = MarkUsedResponse.of(
+                validUsername,
+                true,
+                false,
+                markedAt.toInstant(ZoneOffset.UTC),
+                "Username successfully marked as used"
+        );
+
+        when(usernameMarkUsedUseCase.markAsUsed(validUsername)).thenReturn(Mono.just(domainResult));
+        when(markUsedMapper.toGraphQL(domainResult)).thenReturn(graphqlResponse);
+
+        // ACT
+        Mono<MarkUsedResponse> result = resolver.markUsernameAsUsed(validUsername);
+
+        // ASSERT
+        StepVerifier.create(result)
+                .assertNext(response -> {
+                    assertThat(response.username()).matches("[a-z0-9_-]+");
+                    assertThat(response.username().length()).isBetween(5, 30);
+                })
+                .verifyComplete();
+
+        verify(usernameMarkUsedUseCase).markAsUsed(validUsername);
     }
 
 }

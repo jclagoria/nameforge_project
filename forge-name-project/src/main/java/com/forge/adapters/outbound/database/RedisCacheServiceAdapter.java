@@ -190,6 +190,38 @@ public class RedisCacheServiceAdapter implements CacheService {
                 });
     }
 
+    @Override
+    public Mono<Void> invalidateGenerationCaches() {
+        log.debug("Invalidating all generation caches");
+
+        // Create deletion operations for all language-specific generation caches
+        List<Mono<Long>> generationDeletions = Arrays.stream(Language.values())
+                .map(language -> {
+                    String key = USERNAME_CACHE_PREFIX + language.name();
+                    return redisTemplate.delete(key)
+                            .doOnSuccess(deleted -> {
+                                if (deleted != null && deleted > 0) {
+                                    log.debug("Invalidated generation cache for language: {}", language);
+                                }
+                            });
+                })
+                .toList();
+
+        // Execute all deletions in parallel
+        return Mono.when(generationDeletions)
+                .then()
+                .doOnSuccess(v -> log.debug("Successfully invalidated all generation caches"))
+                .doOnError(error -> log.warn(
+                        "Failed to fully invalidate generation caches: {}",
+                        error.getMessage()
+                ))
+                .onErrorResume(error -> {
+                    // Gracefully handle cache failures - don't fail the operation
+                    log.warn("Generation cache invalidation failed (continuing): {}", error.getMessage());
+                    return Mono.empty();
+                });
+    }
+
     private Mono<String> serializeUsername(Username username) {
         try {
             CachedUsernameDto dto = new CachedUsernameDto(

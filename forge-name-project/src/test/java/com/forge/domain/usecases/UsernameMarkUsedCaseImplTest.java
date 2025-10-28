@@ -40,6 +40,7 @@ class UsernameMarkUsedCaseImplTest {
         String username = "testuser123";
         when(usernameRepository.markAsUsed(username)).thenReturn(Mono.just(true));
         when(cacheService.invalidateValidation(username)).thenReturn(Mono.empty());
+        when(cacheService.invalidateGenerationCaches()).thenReturn(Mono.empty());
 
         // Act & Assert
         StepVerifier.create(useCase.markAsUsed(username))
@@ -54,6 +55,7 @@ class UsernameMarkUsedCaseImplTest {
         // Verify interactions
         verify(usernameRepository).markAsUsed(username);
         verify(cacheService).invalidateValidation(username);
+        verify(cacheService).invalidateGenerationCaches();
     }
 
     @Test
@@ -167,6 +169,7 @@ class UsernameMarkUsedCaseImplTest {
         String username = "validuser";
         when(usernameRepository.markAsUsed(username)).thenReturn(Mono.just(true));
         when(cacheService.invalidateValidation(username)).thenReturn(Mono.empty());
+        when(cacheService.invalidateGenerationCaches()).thenReturn(Mono.empty());
 
         // Act & Assert
         StepVerifier.create(useCase.markAsUsed(username))
@@ -178,6 +181,7 @@ class UsernameMarkUsedCaseImplTest {
 
         verify(usernameRepository).markAsUsed(username);
         verify(cacheService).invalidateValidation(username);
+        verify(cacheService).invalidateGenerationCaches();
     }
 
     @Test
@@ -187,6 +191,7 @@ class UsernameMarkUsedCaseImplTest {
         String username = "logtest";
         when(usernameRepository.markAsUsed(username)).thenReturn(Mono.just(true));
         when(cacheService.invalidateValidation(username)).thenReturn(Mono.empty());
+        when(cacheService.invalidateGenerationCaches()).thenReturn(Mono.empty());
 
         // Act
         StepVerifier.create(useCase.markAsUsed(username))

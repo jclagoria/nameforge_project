@@ -32,8 +32,12 @@ public class UsernameMarkUsedCaseImpl implements UsernameMarkUsedUseCase {
                         return Mono.just(MarkUsedResult.alreadyUsed(username));
                     }
 
-                    return cacheService.invalidateValidation(username)
-                            .doOnSuccess(v -> log.info("Cache invalidated for: {}", username))
+                    // Invalidate both validation cache (specific username) and generation caches (all languages)
+                    return Mono.when(
+                            cacheService.invalidateValidation(username),
+                            cacheService.invalidateGenerationCaches()
+                    )
+                            .doOnSuccess(v -> log.info("Validation and generation caches invalidated for: {}", username))
                             .thenReturn(MarkUsedResult.marked(username, LocalDateTime.now()));
                 })
                 .doOnError(error -> log.error("Error marking username as used: {}", username, error));
